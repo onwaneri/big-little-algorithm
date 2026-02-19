@@ -1,0 +1,16 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# Output files (regenerated on each run)
+final_matches.csv
+satisfaction_scores.csv
+
+# Claude Code local settings
+.claude/
+
+# macOS
+.DS_Store
