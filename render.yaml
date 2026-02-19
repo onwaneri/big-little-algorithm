@@ -1,31 +1,6 @@
 services:
-  # ── Python / FastAPI backend ───────────────────────────────────────────────
   - type: web
-    name: big-little-backend
+    name: big-little-algorithm
     runtime: python
-    buildCommand: pip install -r backend/requirements.txt
+    buildCommand: cd frontend && npm install && npm run build && cd .. && pip install -r backend/requirements.txt
     startCommand: uvicorn backend.api:app --host 0.0.0.0 --port $PORT
-    envVars:
-      # Comma-separated list of allowed CORS origins.
-      # Render resolves this automatically from the frontend service's URL.
-      - key: ALLOWED_ORIGINS
-        fromService:
-          name: big-little-frontend
-          type: web
-          envVarKey: RENDER_EXTERNAL_URL
-
-  # ── React / Vite frontend (static site) ───────────────────────────────────
-  - type: web
-    name: big-little-frontend
-    runtime: static
-    rootDir: frontend
-    buildCommand: npm install && npm run build
-    staticPublishPath: ./dist
-    envVars:
-      # Baked into the JS bundle at build time by Vite.
-      # Render resolves this automatically from the backend service's URL.
-      - key: VITE_API_URL
-        fromService:
-          name: big-little-backend
-          type: web
-          envVarKey: RENDER_EXTERNAL_URL

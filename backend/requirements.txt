@@ -4,3 +4,4 @@ pandas
 scipy
 numpy
 python-multipart
+aiofiles

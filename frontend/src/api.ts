@@ -1,7 +1,9 @@
 import axios from "axios";
 import type { MatchResult, Person } from "./types";
 
-const BASE = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
+// In production the frontend is served by FastAPI on the same domain,
+// so relative URLs work. In local dev, Vite proxies /api/* to :8000.
+const BASE = "";
 
 export async function runMatch(
   freshmen: Person[],

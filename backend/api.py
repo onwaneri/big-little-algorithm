@@ -18,6 +18,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import pandas as pd
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from big_little_matching import (
@@ -241,3 +242,11 @@ def parse_csv(file: UploadFile = File(...)) -> list[dict]:
         df[col] = df[col].astype(str).str.strip().replace("nan", "")
 
     return _df_to_pref_list(df)
+
+
+# ---------------------------------------------------------------------------
+# Serve React frontend (production only — only if dist/ exists)
+# ---------------------------------------------------------------------------
+_dist = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "frontend", "dist")
+if os.path.isdir(_dist):
+    app.mount("/", StaticFiles(directory=_dist, html=True), name="static")
