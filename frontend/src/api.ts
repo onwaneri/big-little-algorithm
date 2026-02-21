@@ -1,5 +1,5 @@
 import axios from "axios";
-import type { MatchResult, Person } from "./types";
+import type { MatchResult, OverrideMatch, Person } from "./types";
 
 // In production the frontend is served by FastAPI on the same domain,
 // so relative URLs work. In local dev, Vite proxies /api/* to :8000.
@@ -7,11 +7,13 @@ const BASE = "";
 
 export async function runMatch(
   freshmen: Person[],
-  sophomores: Person[]
+  sophomores: Person[],
+  overrides: OverrideMatch[] = []
 ): Promise<MatchResult> {
   const { data } = await axios.post<MatchResult>(`${BASE}/api/match`, {
     freshmen,
     sophomores,
+    overrides,
   });
   return data;
 }
@@ -22,5 +24,16 @@ export async function parseCSV(file: File): Promise<Person[]> {
   const { data } = await axios.post<Person[]>(`${BASE}/api/parse-csv`, form, {
     headers: { "Content-Type": "multipart/form-data" },
   });
+  return data;
+}
+
+export async function parseOverridesCSV(file: File): Promise<OverrideMatch[]> {
+  const form = new FormData();
+  form.append("file", file);
+  const { data } = await axios.post<OverrideMatch[]>(
+    `${BASE}/api/parse-overrides-csv`,
+    form,
+    { headers: { "Content-Type": "multipart/form-data" } }
+  );
   return data;
 }
