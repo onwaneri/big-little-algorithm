@@ -29,8 +29,8 @@ import sys
 # Configuration
 # ---------------------------------------------------------------------------
 PREF_COLS = ["Rank1", "Rank2", "Rank3", "Rank4", "Rank5"]
-SOPHOMORES_FILE = "sophomores.csv"
-FRESHMEN_FILE   = "freshmen.csv"
+SOPHOMORES_FILE = "PC 25 Big little.csv"
+FRESHMEN_FILE   = "PC 26 Big Little Form.csv"
 OVERRIDES_FILE  = "overrides.csv"
 OUTPUT_FILE     = "final_matches.csv"
 FUZZY_CUTOFF    = 0.75
@@ -71,6 +71,52 @@ def load_and_validate(filepath: str, group_name: str) -> pd.DataFrame:
         df[col] = df[col].astype(str).str.strip().replace("nan", "")
 
     print(f"[INFO] Loaded {len(df)} {group_name}.")
+    return df.reset_index(drop=True)
+
+
+def load_form_csv(filepath: str, group_name: str) -> pd.DataFrame:
+    """
+    Parse a Google Form export CSV.
+    - Drops the Timestamp column
+    - Finds the 5 preference columns (those starting with pref_col_prefix)
+    - Renames them to Rank1-Rank5
+    - Rows with a blank Name (non-submitters with blank prefs) are kept as-is
+    - Returns a cleaned DataFrame compatible with load_and_validate output
+    """
+    try:
+        df = pd.read_csv(filepath)
+    except FileNotFoundError:
+        sys.exit(f"[ERROR] File not found: {filepath}")
+
+    df.columns = [c.strip() for c in df.columns]
+
+    # Drop Timestamp if present
+    if "Timestamp" in df.columns:
+        df = df.drop(columns=["Timestamp"])
+
+    # All columns after "Name" are the preference columns (in form order)
+    other_cols = [c for c in df.columns if c != "Name"]
+    if len(other_cols) < 5:
+        sys.exit(
+            f"[ERROR] {filepath}: expected at least 5 preference columns after 'Name', "
+            f"found {len(other_cols)}: {other_cols}"
+        )
+
+    rename_map = {old: new for old, new in zip(other_cols[:5], PREF_COLS)}
+    df = df.rename(columns=rename_map)
+
+    # Keep only Name + Rank1-5 (drop any extra columns)
+    keep = ["Name"] + PREF_COLS
+    df = df[[c for c in keep if c in df.columns]]
+
+    df["Name"] = df["Name"].astype(str).str.strip()
+    # Drop rows where Name is blank or "nan" (malformed rows)
+    df = df[df["Name"].notna() & (df["Name"] != "") & (df["Name"] != "nan")]
+
+    for col in PREF_COLS:
+        df[col] = df[col].astype(str).str.strip().replace("nan", "")
+
+    print(f"[INFO] Loaded {len(df)} {group_name} from '{filepath}'.")
     return df.reset_index(drop=True)
 
 
@@ -531,8 +577,8 @@ def main() -> None:
     print("====================================================\n")
 
     # 1. Load data
-    sophs_df  = load_and_validate(SOPHOMORES_FILE, "Sophomores")
-    fresh_df  = load_and_validate(FRESHMEN_FILE, "Freshmen")
+    sophs_df  = load_form_csv(SOPHOMORES_FILE, "Sophomores")
+    fresh_df  = load_form_csv(FRESHMEN_FILE, "Freshmen")
     soph_names = set(sophs_df["Name"])
     fresh_names = set(fresh_df["Name"])
 

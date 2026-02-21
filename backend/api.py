@@ -289,7 +289,13 @@ def run_match(req: MatchRequest) -> MatchResponse:
 
 @app.post("/api/parse-csv")
 def parse_csv(file: UploadFile = File(...)) -> list[dict]:
-    """Parse a participants CSV (Name, Rank1-5) and return structured person list."""
+    """
+    Parse a participants CSV and return structured person list.
+    Accepts two formats:
+      - Standard: columns Name, Rank1, Rank2, Rank3, Rank4, Rank5
+      - Google Form: columns Timestamp, Name, <First choice [of big]>, <Second choice [of big]>, ...
+        (Timestamp is dropped; preference columns are detected by the prefix "First choice")
+    """
     try:
         contents = file.file.read()
         df = pd.read_csv(io.StringIO(contents.decode("utf-8")))
@@ -297,6 +303,27 @@ def parse_csv(file: UploadFile = File(...)) -> list[dict]:
         raise HTTPException(status_code=400, detail=f"Failed to parse CSV: {exc}")
 
     df.columns = [c.strip() for c in df.columns]
+
+    # Auto-detect Google Form format: has "Timestamp" column or preference cols start with "First choice"
+    is_form_format = "Timestamp" in df.columns or any(
+        c.startswith("First choice") for c in df.columns
+    )
+
+    if is_form_format:
+        # Drop Timestamp
+        if "Timestamp" in df.columns:
+            df = df.drop(columns=["Timestamp"])
+
+        # All remaining columns after "Name" are the preference columns (in form order)
+        other_cols = [c for c in df.columns if c != "Name"]
+        if len(other_cols) < 5:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Google Form CSV must have at least 5 preference columns after 'Name'; found {len(other_cols)}.",
+            )
+        rename_map = {old: new for old, new in zip(other_cols[:5], PREF_COLS)}
+        df = df.rename(columns=rename_map)
+
     if "Name" not in df.columns:
         raise HTTPException(status_code=400, detail="CSV must have a 'Name' column.")
     missing_pref = [c for c in PREF_COLS if c not in df.columns]
@@ -304,6 +331,8 @@ def parse_csv(file: UploadFile = File(...)) -> list[dict]:
         raise HTTPException(status_code=400, detail=f"CSV is missing preference columns: {missing_pref}")
 
     df["Name"] = df["Name"].astype(str).str.strip()
+    # Drop rows with blank/nan Name (non-submitters will still be included as long as Name is set)
+    df = df[df["Name"].notna() & (df["Name"] != "") & (df["Name"] != "nan")]
     for col in PREF_COLS:
         df[col] = df[col].astype(str).str.strip().replace("nan", "")
 
