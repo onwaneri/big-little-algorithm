@@ -150,6 +150,11 @@ def _nan_to_none(val) -> float | None:
 # Endpoints
 # ---------------------------------------------------------------------------
 
+@app.get("/api/health")
+def health():
+    return {"status": "ok"}
+
+
 @app.post("/api/match", response_model=MatchResponse)
 def run_match(req: MatchRequest) -> MatchResponse:
     """Run the full matching algorithm and return results."""
