@@ -12,6 +12,10 @@ Manual overrides are read from overrides.csv if present:
   Columns: Freshman_1, Freshman_2, Big_1, Big_2
   Leave Freshman_2 or Big_2 empty for duos / 2-big trios.
 
+Banned pairs are read from banned_pairs.csv if present:
+  Columns: Freshman, Sophomore
+  Specifies freshman-sophomore pairs that cannot be matched together.
+
 Input CSVs:
   sophomores.csv  — columns: Name, Rank1, Rank2, Rank3, Rank4, Rank5
   freshmen.csv    — columns: Name, Rank1, Rank2, Rank3, Rank4, Rank5
@@ -32,10 +36,27 @@ PREF_COLS = ["Rank1", "Rank2", "Rank3", "Rank4", "Rank5"]
 SOPHOMORES_FILE = "PC 25 Big little.csv"
 FRESHMEN_FILE   = "PC 26 Big Little Form.csv"
 OVERRIDES_FILE  = "overrides.csv"
+BANNED_PAIRS_FILE = "banned_pairs.csv"
 OUTPUT_FILE     = "final_matches.csv"
 FUZZY_CUTOFF    = 0.75
 MAX_RANK        = len(PREF_COLS)  # 5
 ALPHA           = 0.1
+
+
+def _normalize_name(name: str) -> str:
+    """Normalise a name for comparison/roster lookup.
+
+    Trims whitespace, collapses repeated spaces, and title‑cases the string.
+    The routine is intentionally conservative so that "JOHN   doe" → "John Doe"
+    while already-proper names are left untouched.  Both the command-line recipe
+    and the backend CSV parser use the same logic.
+    """
+    # convert to str in case we get NaN or other types
+    s = str(name).strip()
+    # collapse internal whitespace
+    s = " ".join(s.split())
+    # titlecase to normalise casing
+    return s.title()
 
 
 # ---------------------------------------------------------------------------
@@ -146,6 +167,7 @@ def load_overrides(filepath: str, fresh_names: set, soph_names: set) -> list[dic
             df[col] = ""
     for col in ["Freshman_1", "Freshman_2", "Big_1", "Big_2"]:
         df[col] = df[col].astype(str).str.strip().replace("nan", "")
+        df[col] = df[col].apply(_normalize_name)
 
     overrides = []
     for _, row in df.iterrows():
@@ -181,6 +203,53 @@ def load_overrides(filepath: str, fresh_names: set, soph_names: set) -> list[dic
               f" ↔ {b1}" + (f" & {b2}" if b2 else ""))
 
     return overrides
+
+
+def load_banned_pairs(filepath: str, fresh_names: set, soph_names: set) -> list[dict]:
+    """
+    Load banned_pairs.csv if it exists. Returns a list of banned pair dicts with keys:
+      freshman, sophomore
+    Validates all names against rosters.
+    """
+    if not os.path.exists(filepath):
+        return []
+
+    try:
+        df = pd.read_csv(filepath)
+    except Exception as e:
+        sys.exit(f"[ERROR] Could not read {filepath}: {e}")
+
+    df.columns = [c.strip() for c in df.columns]
+    required = ["Freshman", "Sophomore"]
+    missing = [c for c in required if c not in df.columns]
+    if missing:
+        sys.exit(f"[ERROR] {filepath} must have columns: Freshman, Sophomore")
+
+    for col in ["Freshman", "Sophomore"]:
+        df[col] = df[col].astype(str).str.strip().replace("nan", "")
+        df[col] = df[col].apply(_normalize_name)
+
+    banned = []
+    for _, row in df.iterrows():
+        fresh = row["Freshman"]
+        soph = row["Sophomore"]
+
+        if not fresh or not soph:
+            continue
+
+        # Validate names
+        errors = []
+        if fresh not in fresh_names:
+            errors.append(f"Freshman '{fresh}' not in freshmen roster")
+        if soph not in soph_names:
+            errors.append(f"Sophomore '{soph}' not in sophomores roster")
+        if errors:
+            sys.exit(f"[ERROR] Banned pair row has invalid names: {'; '.join(errors)}")
+
+        banned.append({"freshman": fresh, "sophomore": soph})
+        print(f"[INFO] Banned pair: {fresh!r} ↔ {soph!r}")
+
+    return banned
 
 
 def check_name_mismatches(
@@ -385,6 +454,82 @@ def select_trios(
             cur_soph_prefs = remove_from_prefs(cur_soph_prefs, removed)
 
     return trios_2bigs, trios_2littles
+
+
+# ---------------------------------------------------------------------------
+# Twin-Pair Selection
+# ---------------------------------------------------------------------------
+
+def select_twin_trios(
+    soph_twin_pairs: list[tuple[str, str]],
+    fresh_twin_pairs: list[tuple[str, str]],
+    fresh_pool: list[str],
+    soph_pool: list[str],
+    fresh_prefs: dict[str, list[str]],
+    soph_prefs: dict[str, list[str]],
+) -> tuple[
+    list[tuple[str, str, str]],  # 2-big trios  (freshman, big1, big2)
+    list[tuple[str, str, str]],  # 2-little trios (fresh1, fresh2, soph)
+    list[str],                   # remaining fresh_pool
+    list[str],                   # remaining soph_pool
+    dict[str, list[str]],        # updated fresh_prefs
+    dict[str, list[str]],        # updated soph_prefs
+]:
+    """
+    Process twin pairs before the main trio/matching algorithm.
+
+    Sophomore twins (B1, B2): algorithm picks the best available freshman.
+    Freshman twins  (F1, F2): algorithm picks the best available sophomore.
+
+    Members are removed from the pools after each selection.
+    Returns updated pools and prefs for downstream use.
+    """
+    avail_fresh = list(fresh_pool)
+    avail_soph  = list(soph_pool)
+    cur_fresh_prefs = dict(fresh_prefs)
+    cur_soph_prefs  = dict(soph_prefs)
+    trios_2bigs:    list[tuple[str, str, str]] = []
+    trios_2littles: list[tuple[str, str, str]] = []
+
+    for b1, b2 in soph_twin_pairs:
+        if not avail_fresh:
+            raise ValueError(f"No freshmen available to assign to sophomore twins {b1!r} & {b2!r}")
+        best_f = min(
+            avail_fresh,
+            key=lambda f: (
+                mutual_score(f, b1, cur_fresh_prefs, cur_soph_prefs)
+                + mutual_score(f, b2, cur_fresh_prefs, cur_soph_prefs)
+            ),
+        )
+        trios_2bigs.append((best_f, b1, b2))
+        avail_fresh.remove(best_f)
+        avail_soph.remove(b1)
+        avail_soph.remove(b2)
+        removed = {best_f, b1, b2}
+        cur_fresh_prefs = remove_from_prefs(cur_fresh_prefs, removed)
+        cur_soph_prefs  = remove_from_prefs(cur_soph_prefs,  removed)
+        print(f"[INFO] Twin trio (soph): {best_f!r} ↔ {b1!r} & {b2!r}")
+
+    for f1, f2 in fresh_twin_pairs:
+        if not avail_soph:
+            raise ValueError(f"No sophomores available to assign to freshman twins {f1!r} & {f2!r}")
+        best_b = min(
+            avail_soph,
+            key=lambda b: (
+                mutual_score(f1, b, cur_fresh_prefs, cur_soph_prefs)
+                + mutual_score(f2, b, cur_fresh_prefs, cur_soph_prefs)
+            ),
+        )
+        trios_2littles.append((f1, f2, best_b))
+        avail_fresh.remove(f1)
+        avail_fresh.remove(f2)
+        avail_soph.remove(best_b)
+        removed = {f1, f2, best_b}
+        cur_fresh_prefs = remove_from_prefs(cur_fresh_prefs, removed)
+        cur_soph_prefs  = remove_from_prefs(cur_soph_prefs,  removed)
+        print(f"[INFO] Twin trio (fresh): {f1!r} & {f2!r} ↔ {best_b!r}")
+
+    return trios_2bigs, trios_2littles, avail_fresh, avail_soph, cur_fresh_prefs, cur_soph_prefs
 
 
 # ---------------------------------------------------------------------------
@@ -603,6 +748,14 @@ def main() -> None:
     # 4. Build preference lists
     fresh_prefs = build_preference_lists(fresh_df, soph_names)
     soph_prefs  = build_preference_lists(sophs_df, fresh_names)
+
+    # 4a. Load and apply banned pairs
+    banned = load_banned_pairs(BANNED_PAIRS_FILE, fresh_names, soph_names)
+    banned_set = {(ban["freshman"], ban["sophomore"]) for ban in banned}
+    for freshman, prefs in fresh_prefs.items():
+        fresh_prefs[freshman] = [s for s in prefs if (freshman, s) not in banned_set]
+    for sophomore, prefs in soph_prefs.items():
+        soph_prefs[sophomore] = [f for f in prefs if (f, sophomore) not in banned_set]
 
     # 5. Remove overridden members from the pools and preference lists
     fresh_pool = [f for f in fresh_names if f not in overridden_fresh]

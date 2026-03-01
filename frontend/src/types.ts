@@ -3,6 +3,17 @@ export interface Person {
   preferences: string[]; // up to 5 names in ranked order
 }
 
+export interface TwinPair {
+  person_1: string;
+  person_2: string;
+  group: "sophomore" | "freshman";
+}
+
+export interface BannedPair {
+  freshman: string;
+  sophomore: string;
+}
+
 export interface OverrideMatch {
   freshman_1: string;
   freshman_2: string | null;  // populated for 2-little trios

@@ -5,10 +5,11 @@ import SummaryStats from "./SummaryStats";
 
 interface Props {
   result: MatchResult;
-  onBack: () => void;
+  onEditConstraints: () => void;
 }
 
-export default function ResultsPage({ result, onBack }: Props) {
+export default function ResultsPage({ result, onEditConstraints }: Props) {
+
   return (
     <div className="max-w-6xl mx-auto px-4 py-8">
       {/* Header */}
@@ -20,12 +21,20 @@ export default function ResultsPage({ result, onBack }: Props) {
             {result.matches.filter((m) => m.trio).length === 1 ? "1 trio" : "no trio"}
           </p>
         </div>
-        <button
-          onClick={onBack}
-          className="px-4 py-2 rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-100 transition text-sm font-medium"
-        >
-          ← Back / Re-run
-        </button>
+        <div className="flex gap-2">
+          <button
+            onClick={onEditConstraints}
+            className="px-4 py-2 rounded-lg border border-indigo-300 text-indigo-700 hover:bg-indigo-50 transition text-sm font-medium"
+          >
+            ✏ Edit constraints
+          </button>
+          <button
+            onClick={onEditConstraints}
+            className="px-4 py-2 rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-100 transition text-sm font-medium"
+          >
+            ← Back
+          </button>
+        </div>
       </div>
 
       {/* Summary cards */}

@@ -11,6 +11,7 @@ import io
 import math
 import sys
 import os
+from typing import Literal
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -27,6 +28,7 @@ from big_little_matching import (
     optimize_matching,
     remove_from_prefs,
     select_trios,
+    select_twin_trios,
 )
 
 # ---------------------------------------------------------------------------
@@ -62,10 +64,23 @@ class OverrideMatch(BaseModel):
     big_2: str | None = None        # populated for 2-big trios
 
 
+class TwinPair(BaseModel):
+    person_1: str
+    person_2: str
+    group: Literal["sophomore", "freshman"]
+
+
+class BannedPair(BaseModel):
+    freshman: str
+    sophomore: str
+
+
 class MatchRequest(BaseModel):
     freshmen: list[Person]
     sophomores: list[Person]
     overrides: list[OverrideMatch] = []
+    twins: list[TwinPair] = []
+    banned: list[BannedPair] = []
 
 
 class Match(BaseModel):
@@ -180,6 +195,9 @@ def run_match(req: MatchRequest) -> MatchResponse:
 
     fresh_prefs = _build_prefs_dict(req.freshmen)
     soph_prefs  = _build_prefs_dict(req.sophomores)
+    # Save originals for satisfaction scoring (removal operations return new dicts)
+    orig_fresh_prefs = fresh_prefs
+    orig_soph_prefs  = soph_prefs
 
     # Collect overridden members and remove from pools / preference lists
     overridden_fresh = set()
@@ -199,7 +217,52 @@ def run_match(req: MatchRequest) -> MatchResponse:
     fresh_pool = [f for f in freshmen_names   if f not in overridden_fresh]
     soph_pool  = [s for s in sophomores_names if s not in overridden_soph]
 
-    # Select trios based on D
+    # Validate and process twin pairs
+    for tw in req.twins:
+        if tw.person_1 == tw.person_2:
+            raise HTTPException(status_code=400, detail=f"Twin pair cannot list the same person twice: '{tw.person_1}'.")
+        if tw.group == "sophomore":
+            for p in (tw.person_1, tw.person_2):
+                if p not in soph_set:
+                    raise HTTPException(status_code=400, detail=f"Twin: '{p}' not in sophomores roster.")
+                if p in overridden_soph:
+                    raise HTTPException(status_code=400, detail=f"Twin: '{p}' is already locked in an override.")
+        else:
+            for p in (tw.person_1, tw.person_2):
+                if p not in fresh_set:
+                    raise HTTPException(status_code=400, detail=f"Twin: '{p}' not in freshmen roster.")
+                if p in overridden_fresh:
+                    raise HTTPException(status_code=400, detail=f"Twin: '{p}' is already locked in an override.")
+
+    soph_twin_pairs  = [(t.person_1, t.person_2) for t in req.twins if t.group == "sophomore"]
+    fresh_twin_pairs = [(t.person_1, t.person_2) for t in req.twins if t.group == "freshman"]
+
+    # Validate and process banned pairs
+    for ban in req.banned:
+        if ban.freshman not in fresh_set:
+            raise HTTPException(status_code=400, detail=f"Banned pair: '{ban.freshman}' not in freshmen roster.")
+        if ban.sophomore not in soph_set:
+            raise HTTPException(status_code=400, detail=f"Banned pair: '{ban.sophomore}' not in sophomores roster.")
+        if ban.freshman in overridden_fresh:
+            raise HTTPException(status_code=400, detail=f"Banned pair: '{ban.freshman}' is already locked in an override.")
+        if ban.sophomore in overridden_soph:
+            raise HTTPException(status_code=400, detail=f"Banned pair: '{ban.sophomore}' is already locked in an override.")
+
+    # Remove banned pairs from preference lists
+    banned_set = {(ban.freshman, ban.sophomore) for ban in req.banned}
+    for freshman, prefs in fresh_prefs.items():
+        fresh_prefs[freshman] = [s for s in prefs if (freshman, s) not in banned_set]
+    for sophomore, prefs in soph_prefs.items():
+        soph_prefs[sophomore] = [f for f in prefs if (f, sophomore) not in banned_set]
+
+    try:
+        twin_trios_2bigs, twin_trios_2littles, fresh_pool, soph_pool, fresh_prefs, soph_prefs = (
+            select_twin_trios(soph_twin_pairs, fresh_twin_pairs, fresh_pool, soph_pool, fresh_prefs, soph_prefs)
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    # Select remaining trios based on D
     D = len(soph_pool) - len(fresh_pool)
     trios_2bigs, trios_2littles = select_trios(D, fresh_pool, soph_pool, fresh_prefs, soph_prefs)
 
@@ -232,12 +295,12 @@ def run_match(req: MatchRequest) -> MatchResponse:
             override_duos[ov.freshman_1] = ov.big_1
 
     all_duos         = {**duo_matches, **override_duos}
-    all_trios_2bigs  = trios_2bigs  + override_trios_2bigs
-    all_trios_2lit   = trios_2littles + override_trios_2littles
+    all_trios_2bigs  = twin_trios_2bigs  + trios_2bigs  + override_trios_2bigs
+    all_trios_2lit   = twin_trios_2littles + trios_2littles + override_trios_2littles
 
-    # Compute satisfaction
+    # Compute satisfaction using original (unfiltered) prefs so scores are accurate
     sat_df = compute_satisfaction(
-        all_duos, all_trios_2bigs, all_trios_2lit, fresh_prefs, soph_prefs
+        all_duos, all_trios_2bigs, all_trios_2lit, orig_fresh_prefs, orig_soph_prefs
     )
 
     # Build match list
@@ -360,8 +423,15 @@ def parse_overrides_csv(file: UploadFile = File(...)) -> list[dict]:
     for col in ["Freshman_2", "Big_2"]:
         if col not in df.columns:
             df[col] = ""
+    # normalization helper (shared with main algorithm)
+    def _normalize_name(val: str) -> str:
+        s = str(val).strip()
+        s = " ".join(s.split())
+        return s.title()
+
     for col in ["Freshman_1", "Freshman_2", "Big_1", "Big_2"]:
         df[col] = df[col].astype(str).str.strip().replace("nan", "")
+        df[col] = df[col].apply(_normalize_name)
 
     result = []
     for _, row in df.iterrows():

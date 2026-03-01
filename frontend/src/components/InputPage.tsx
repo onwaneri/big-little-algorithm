@@ -1,22 +1,43 @@
 import { useState } from "react";
 import { parseOverridesCSV, runMatch } from "../api";
-import type { MatchResult, OverrideMatch, Person } from "../types";
+import type { MatchResult, OverrideMatch, Person, TwinPair, BannedPair } from "../types";
 import CSVUpload from "./CSVUpload";
 import OverrideTable from "./OverrideTable";
 import PersonTable from "./PersonTable";
+import TwinsTable from "./TwinsTable";
+import BannedPairsTable from "./BannedPairsTable";
 
 interface Props {
-  onResult: (result: MatchResult) => void;
+  onResult: (
+    result: MatchResult,
+    freshmen: Person[],
+    sophomores: Person[],
+    overrides: OverrideMatch[],
+    twins: TwinPair[],
+    banned: BannedPair[]
+  ) => void;
+  initialOverrides?: OverrideMatch[];
+  initialTwins?: TwinPair[];
+  initialBanned?: BannedPair[];
 }
 
 type Tab = "upload" | "manual";
 
-export default function InputPage({ onResult }: Props) {
+export default function InputPage({
+  onResult,
+  initialOverrides = [],
+  initialTwins = [],
+  initialBanned = [],
+}: Props) {
   const [tab, setTab] = useState<Tab>("upload");
   const [freshmen, setFreshmen] = useState<Person[]>([]);
   const [sophomores, setSophmores] = useState<Person[]>([]);
-  const [overrides, setOverrides] = useState<OverrideMatch[]>([]);
+  const [overrides, setOverrides] = useState<OverrideMatch[]>(initialOverrides);
+  const [twins, setTwins] = useState<TwinPair[]>(initialTwins);
+  const [banned, setBanned] = useState<BannedPair[]>(initialBanned);
   const [showOverrides, setShowOverrides] = useState(false);
+  const [showTwins, setShowTwins] = useState(false);
+  const [showBanned, setShowBanned] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [overrideUploadMsg, setOverrideUploadMsg] = useState<string | null>(null);
@@ -55,6 +76,39 @@ export default function InputPage({ onResult }: Props) {
       return;
     }
 
+    // Validate twin pairs
+    for (const tw of twins) {
+      if (!tw.person_1 || !tw.person_2) {
+        setError("Each twin pair must have both people selected.");
+        return;
+      }
+      const list = tw.group === "sophomore" ? sophNames : freshNames;
+      if (!list.includes(tw.person_1)) {
+        setError(`Twin error: '${tw.person_1}' is not in the ${tw.group}s list.`);
+        return;
+      }
+      if (!list.includes(tw.person_2)) {
+        setError(`Twin error: '${tw.person_2}' is not in the ${tw.group}s list.`);
+        return;
+      }
+    }
+
+    // Validate banned pairs
+    for (const ban of banned) {
+      if (!ban.freshman || !ban.sophomore) {
+        setError("Each banned pair must have both a freshman and sophomore selected.");
+        return;
+      }
+      if (!freshNames.includes(ban.freshman)) {
+        setError(`Banned pair error: '${ban.freshman}' is not in the freshmen list.`);
+        return;
+      }
+      if (!sophNames.includes(ban.sophomore)) {
+        setError(`Banned pair error: '${ban.sophomore}' is not in the sophomores list.`);
+        return;
+      }
+    }
+
     // Validate overrides reference known names
     for (const ov of overrides) {
       if (!freshNames.includes(ov.freshman_1)) {
@@ -77,8 +131,8 @@ export default function InputPage({ onResult }: Props) {
 
     setLoading(true);
     try {
-      const result = await runMatch(validFresh, validSoph, overrides);
-      onResult(result);
+      const result = await runMatch(validFresh, validSoph, overrides, twins, banned);
+      onResult(result, validFresh, validSoph, overrides, twins, banned);
     } catch (err: unknown) {
       const detail =
         (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail ??
@@ -187,6 +241,7 @@ export default function InputPage({ onResult }: Props) {
             <div className="mb-4">
               <p className="text-xs text-gray-500 mb-1">
                 Upload an overrides CSV (columns: <code>Freshman_1, Freshman_2, Big_1, Big_2</code> — leave optional columns empty).
+                Names will be trimmed and normalized (extra spaces removed, title‑cased).
               </p>
               <label className="inline-block cursor-pointer text-sm px-3 py-1.5 rounded-md border border-amber-300 text-amber-700 hover:bg-amber-50 transition">
                 Upload overrides.csv
@@ -210,6 +265,60 @@ export default function InputPage({ onResult }: Props) {
               freshNames={freshNames}
               sophNames={sophNames}
               onChange={setOverrides}
+            />
+          </div>
+        )}
+      </div>
+
+      {/* Twin pairs section */}
+      <div className="mb-6">
+        <button
+          onClick={() => setShowTwins((v) => !v)}
+          className="flex items-center gap-2 text-sm font-medium text-violet-700 hover:text-violet-900 transition mb-2"
+        >
+          <span>{showTwins ? "▾" : "▸"}</span>
+          Define twin pairs
+          {twins.length > 0 && (
+            <span className="ml-1 px-2 py-0.5 rounded-full bg-violet-200 text-violet-800 text-xs">
+              {twins.length}
+            </span>
+          )}
+        </button>
+
+        {showTwins && (
+          <div className="pl-4 border-l-2 border-violet-200">
+            <TwinsTable
+              twins={twins}
+              freshNames={freshNames}
+              sophNames={sophNames}
+              onChange={setTwins}
+            />
+          </div>
+        )}
+      </div>
+
+      {/* Banned pairs section */}
+      <div className="mb-6">
+        <button
+          onClick={() => setShowBanned((v) => !v)}
+          className="flex items-center gap-2 text-sm font-medium text-red-700 hover:text-red-900 transition mb-2"
+        >
+          <span>{showBanned ? "▾" : "▸"}</span>
+          Ban specific pairs
+          {banned.length > 0 && (
+            <span className="ml-1 px-2 py-0.5 rounded-full bg-red-200 text-red-800 text-xs">
+              {banned.length}
+            </span>
+          )}
+        </button>
+
+        {showBanned && (
+          <div className="pl-4 border-l-2 border-red-200">
+            <BannedPairsTable
+              banned={banned}
+              freshNames={freshNames}
+              sophNames={sophNames}
+              onChange={setBanned}
             />
           </div>
         )}
