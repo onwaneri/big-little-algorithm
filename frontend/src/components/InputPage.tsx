@@ -134,9 +134,21 @@ export default function InputPage({
       const result = await runMatch(validFresh, validSoph, overrides, twins, banned);
       onResult(result, validFresh, validSoph, overrides, twins, banned);
     } catch (err: unknown) {
-      const detail =
-        (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail ??
-        "An unexpected error occurred. Make sure the backend is running.";
+      type AxiosErr = { response?: { status?: number; data?: { detail?: unknown } }; message?: string };
+      const e = err as AxiosErr;
+      let detail: string;
+      if (e.response) {
+        const d = e.response.data?.detail;
+        detail = Array.isArray(d)
+          ? d.map((x: { msg?: string }) => x.msg ?? JSON.stringify(x)).join("; ")
+          : d != null
+          ? String(d)
+          : `HTTP ${e.response.status ?? "?"} — no detail returned`;
+      } else {
+        detail = e.message
+          ? `Network error: ${e.message}`
+          : "Cannot reach the server — check Render logs.";
+      }
       setError(detail);
     } finally {
       setLoading(false);
