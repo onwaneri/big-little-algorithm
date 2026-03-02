@@ -18,6 +18,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import pandas as pd
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -461,4 +462,11 @@ def parse_overrides_csv(file: UploadFile = File(...)) -> list[dict]:
 # ---------------------------------------------------------------------------
 _dist = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "frontend", "dist")
 if os.path.isdir(_dist):
-    app.mount("/", StaticFiles(directory=_dist, html=True), name="static")
+    # Serve compiled JS/CSS assets under /assets — never conflicts with /api/*
+    app.mount("/assets", StaticFiles(directory=os.path.join(_dist, "assets")), name="assets")
+
+    # Catch-all: serve index.html for every non-API path so React Router works.
+    # This route is registered LAST, so all /api/* routes above take priority.
+    @app.get("/{full_path:path}", include_in_schema=False)
+    async def serve_spa(full_path: str) -> FileResponse:
+        return FileResponse(os.path.join(_dist, "index.html"))
