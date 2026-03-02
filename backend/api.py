@@ -325,9 +325,9 @@ def run_match(req: MatchRequest) -> MatchResponse:
         sat_out.append(
             SatisfactionRow(
                 freshman=row["Freshman_1"],
-                freshman_2=row["Freshman_2"] if row["Freshman_2"] else None,
+                freshman_2=None if pd.isna(row["Freshman_2"]) else str(row["Freshman_2"]),
                 big_1=row["Big_1"],
-                big_2=row["Big_2"] if row["Big_2"] else None,
+                big_2=None if pd.isna(row["Big_2"]) else str(row["Big_2"]),
                 freshman_score=row["Freshman_1_Score"],
                 freshman_2_score=_nan_to_none(row["Freshman_2_Score"]),
                 big_1_score=row["Big_1_Score"],
