@@ -43,6 +43,39 @@ export default function ResultsPage({ result, onEditConstraints }: Props) {
         totalPairs={result.matches.length}
       />
 
+      {/* Unmatched people (only shown when config allowed leaving people out) */}
+      {(result.unmatched_bigs.length > 0 || result.unmatched_littles.length > 0) && (
+        <section className="mb-8">
+          <h2 className="text-lg font-semibold text-gray-800 mb-3">Unmatched</h2>
+          <div className="flex flex-col sm:flex-row gap-4">
+            {result.unmatched_bigs.length > 0 && (
+              <div className="flex-1 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3">
+                <p className="text-xs font-semibold uppercase text-amber-700 mb-2">
+                  Bigs without a little ({result.unmatched_bigs.length})
+                </p>
+                <ul className="space-y-1">
+                  {result.unmatched_bigs.map((name) => (
+                    <li key={name} className="text-sm text-amber-900">{name}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            {result.unmatched_littles.length > 0 && (
+              <div className="flex-1 rounded-lg border border-violet-200 bg-violet-50 px-4 py-3">
+                <p className="text-xs font-semibold uppercase text-violet-700 mb-2">
+                  Littles without a big ({result.unmatched_littles.length})
+                </p>
+                <ul className="space-y-1">
+                  {result.unmatched_littles.map((name) => (
+                    <li key={name} className="text-sm text-violet-900">{name}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
+        </section>
+      )}
+
       {/* Final matches */}
       <section className="mb-8">
         <h2 className="text-lg font-semibold text-gray-800 mb-3">Final Pairings</h2>

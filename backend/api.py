@@ -3,8 +3,8 @@ FastAPI backend for the Big-Little Matching Algorithm.
 
 Endpoints:
   POST /api/match             — run the full algorithm, return matches + scores
-  POST /api/parse-csv         — parse a participants CSV (Name, Rank1-5)
-  POST /api/parse-overrides-csv — parse an overrides CSV (Freshman_1, Freshman_2, Big_1, Big_2)
+  POST /api/parse-csv         — parse a participants CSV (Name, Rank1-RankN)
+  POST /api/parse-overrides-csv — parse an overrides CSV (Little_1, Little_2, Big_1, Big_2)
 """
 
 import io
@@ -23,7 +23,6 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from big_little_matching import (
-    PREF_COLS,
     build_preference_lists,
     compute_satisfaction,
     optimize_matching,
@@ -59,47 +58,51 @@ class Person(BaseModel):
 
 
 class OverrideMatch(BaseModel):
-    freshman_1: str
-    freshman_2: str | None = None   # populated for 2-little trios
+    little_1: str
+    little_2: str | None = None   # populated for 2-little trios
     big_1: str
-    big_2: str | None = None        # populated for 2-big trios
+    big_2: str | None = None      # populated for 2-big trios
 
 
 class TwinPair(BaseModel):
     person_1: str
     person_2: str
-    group: Literal["sophomore", "freshman"]
+    group: Literal["big", "little"]
 
 
 class BannedPair(BaseModel):
-    freshman: str
-    sophomore: str
+    little: str
+    big: str
 
 
 class MatchRequest(BaseModel):
-    freshmen: list[Person]
-    sophomores: list[Person]
+    littles: list[Person]
+    bigs: list[Person]
     overrides: list[OverrideMatch] = []
     twins: list[TwinPair] = []
     banned: list[BannedPair] = []
+    big_weight: float = 0.5                  # 0 = favor littles, 1 = favor bigs
+    every_big_needs_little: bool = True      # if False, surplus bigs go unmatched
+    every_little_needs_big: bool = True      # if False, surplus littles go unmatched
+    num_preferences: int = 5                 # max preferences submitted (used as max_rank)
 
 
 class Match(BaseModel):
-    freshman: str
-    freshman_2: str | None = None
+    little: str
+    little_2: str | None = None
     big_1: str
     big_2: str | None = None
     trio: bool
 
 
 class SatisfactionRow(BaseModel):
-    freshman: str
-    freshman_2: str | None = None
+    little: str
+    little_2: str | None = None
     big_1: str
     big_2: str | None = None
-    freshman_score: float
-    freshman_2_score: float | None = None
-    big_1_score: float
+    little_score: float | None = None
+    little_2_score: float | None = None
+    big_1_score: float | None = None
     big_2_score: float | None = None
     pair_score: float
 
@@ -114,6 +117,8 @@ class MatchResponse(BaseModel):
     matches: list[Match]
     satisfaction: list[SatisfactionRow]
     summary: Summary
+    unmatched_bigs: list[str] = []
+    unmatched_littles: list[str] = []
 
 
 # ---------------------------------------------------------------------------
@@ -124,12 +129,19 @@ def _build_prefs_dict(people: list[Person]) -> dict[str, list[str]]:
     return {p.name: p.preferences for p in people}
 
 
+def _rank_cols_from_df(df: pd.DataFrame) -> list[str]:
+    """Return sorted RankN columns present in df."""
+    cols = [c for c in df.columns if c.startswith("Rank") and c[4:].isdigit()]
+    return sorted(cols, key=lambda c: int(c[4:]))
+
+
 def _df_to_pref_list(df: pd.DataFrame) -> list[dict]:
+    rank_cols = _rank_cols_from_df(df)
     result = []
     for _, row in df.iterrows():
         prefs = [
             str(row[col]).strip()
-            for col in PREF_COLS
+            for col in rank_cols
             if col in df.columns and str(row[col]).strip() not in ("", "nan")
         ]
         result.append({"name": str(row["Name"]).strip(), "preferences": prefs})
@@ -159,146 +171,165 @@ def health():
 @app.post("/api/match", response_model=MatchResponse)
 def run_match(req: MatchRequest) -> MatchResponse:
     """Run the full matching algorithm and return results."""
-    freshmen_names   = [p.name for p in req.freshmen]
-    sophomores_names = [p.name for p in req.sophomores]
-    fresh_set = set(freshmen_names)
-    soph_set  = set(sophomores_names)
+    littles_names = [p.name for p in req.littles]
+    bigs_names    = [p.name for p in req.bigs]
+    little_set = set(littles_names)
+    big_set    = set(bigs_names)
 
-    if not freshmen_names or not sophomores_names:
-        raise HTTPException(status_code=400, detail="Need at least one freshman and one sophomore.")
+    if not littles_names or not bigs_names:
+        raise HTTPException(status_code=400, detail="Need at least one little and one big.")
 
     # Validate preference names reference the correct group
-    for p in req.freshmen:
-        bad = [n for n in p.preferences if n not in soph_set]
+    for p in req.littles:
+        bad = [n for n in p.preferences if n not in big_set]
         if bad:
             raise HTTPException(
                 status_code=400,
-                detail=f"Freshman '{p.name}' has unknown sophomore(s) in preferences: {bad}",
+                detail=f"Little '{p.name}' has unknown big(s) in preferences: {bad}",
             )
-    for p in req.sophomores:
-        bad = [n for n in p.preferences if n not in fresh_set]
+    for p in req.bigs:
+        bad = [n for n in p.preferences if n not in little_set]
         if bad:
             raise HTTPException(
                 status_code=400,
-                detail=f"Sophomore '{p.name}' has unknown freshman in preferences: {bad}",
+                detail=f"Big '{p.name}' has unknown little(s) in preferences: {bad}",
             )
 
     # Validate override names
     for ov in req.overrides:
-        if ov.freshman_1 not in fresh_set:
-            raise HTTPException(status_code=400, detail=f"Override: '{ov.freshman_1}' not in freshmen roster.")
-        if ov.freshman_2 and ov.freshman_2 not in fresh_set:
-            raise HTTPException(status_code=400, detail=f"Override: '{ov.freshman_2}' not in freshmen roster.")
-        if ov.big_1 not in soph_set:
-            raise HTTPException(status_code=400, detail=f"Override: '{ov.big_1}' not in sophomores roster.")
-        if ov.big_2 and ov.big_2 not in soph_set:
-            raise HTTPException(status_code=400, detail=f"Override: '{ov.big_2}' not in sophomores roster.")
-        if ov.freshman_2 and ov.big_2:
+        if ov.little_1 not in little_set:
+            raise HTTPException(status_code=400, detail=f"Override: '{ov.little_1}' not in littles roster.")
+        if ov.little_2 and ov.little_2 not in little_set:
+            raise HTTPException(status_code=400, detail=f"Override: '{ov.little_2}' not in littles roster.")
+        if ov.big_1 not in big_set:
+            raise HTTPException(status_code=400, detail=f"Override: '{ov.big_1}' not in bigs roster.")
+        if ov.big_2 and ov.big_2 not in big_set:
+            raise HTTPException(status_code=400, detail=f"Override: '{ov.big_2}' not in bigs roster.")
+        if ov.little_2 and ov.big_2:
             raise HTTPException(
                 status_code=400,
-                detail="Override cannot have both freshman_2 and big_2 set simultaneously.",
+                detail="Override cannot have both little_2 and big_2 set simultaneously.",
             )
 
-    fresh_prefs = _build_prefs_dict(req.freshmen)
-    soph_prefs  = _build_prefs_dict(req.sophomores)
-    # Save originals for satisfaction scoring (removal operations return new dicts)
-    orig_fresh_prefs = fresh_prefs
-    orig_soph_prefs  = soph_prefs
+    little_prefs = _build_prefs_dict(req.littles)
+    big_prefs    = _build_prefs_dict(req.bigs)
+    # Save originals for satisfaction scoring
+    orig_little_prefs = little_prefs
+    orig_big_prefs    = big_prefs
 
     # Collect overridden members and remove from pools / preference lists
-    overridden_fresh = set()
-    overridden_soph  = set()
+    overridden_littles = set()
+    overridden_bigs    = set()
     for ov in req.overrides:
-        overridden_fresh.add(ov.freshman_1)
-        if ov.freshman_2:
-            overridden_fresh.add(ov.freshman_2)
-        overridden_soph.add(ov.big_1)
+        overridden_littles.add(ov.little_1)
+        if ov.little_2:
+            overridden_littles.add(ov.little_2)
+        overridden_bigs.add(ov.big_1)
         if ov.big_2:
-            overridden_soph.add(ov.big_2)
+            overridden_bigs.add(ov.big_2)
 
-    all_override_names = overridden_fresh | overridden_soph
-    fresh_prefs = remove_from_prefs(fresh_prefs, all_override_names)
-    soph_prefs  = remove_from_prefs(soph_prefs,  all_override_names)
+    all_override_names = overridden_littles | overridden_bigs
+    little_prefs = remove_from_prefs(little_prefs, all_override_names)
+    big_prefs    = remove_from_prefs(big_prefs,    all_override_names)
 
-    fresh_pool = [f for f in freshmen_names   if f not in overridden_fresh]
-    soph_pool  = [s for s in sophomores_names if s not in overridden_soph]
+    little_pool = [l for l in littles_names if l not in overridden_littles]
+    big_pool    = [b for b in bigs_names    if b not in overridden_bigs]
 
     # Validate and process twin pairs
     for tw in req.twins:
         if tw.person_1 == tw.person_2:
             raise HTTPException(status_code=400, detail=f"Twin pair cannot list the same person twice: '{tw.person_1}'.")
-        if tw.group == "sophomore":
+        if tw.group == "big":
             for p in (tw.person_1, tw.person_2):
-                if p not in soph_set:
-                    raise HTTPException(status_code=400, detail=f"Twin: '{p}' not in sophomores roster.")
-                if p in overridden_soph:
+                if p not in big_set:
+                    raise HTTPException(status_code=400, detail=f"Twin: '{p}' not in bigs roster.")
+                if p in overridden_bigs:
                     raise HTTPException(status_code=400, detail=f"Twin: '{p}' is already locked in an override.")
         else:
             for p in (tw.person_1, tw.person_2):
-                if p not in fresh_set:
-                    raise HTTPException(status_code=400, detail=f"Twin: '{p}' not in freshmen roster.")
-                if p in overridden_fresh:
+                if p not in little_set:
+                    raise HTTPException(status_code=400, detail=f"Twin: '{p}' not in littles roster.")
+                if p in overridden_littles:
                     raise HTTPException(status_code=400, detail=f"Twin: '{p}' is already locked in an override.")
 
-    soph_twin_pairs  = [(t.person_1, t.person_2) for t in req.twins if t.group == "sophomore"]
-    fresh_twin_pairs = [(t.person_1, t.person_2) for t in req.twins if t.group == "freshman"]
+    big_twin_pairs    = [(t.person_1, t.person_2) for t in req.twins if t.group == "big"]
+    little_twin_pairs = [(t.person_1, t.person_2) for t in req.twins if t.group == "little"]
 
     # Validate and process banned pairs
     for ban in req.banned:
-        if ban.freshman not in fresh_set:
-            raise HTTPException(status_code=400, detail=f"Banned pair: '{ban.freshman}' not in freshmen roster.")
-        if ban.sophomore not in soph_set:
-            raise HTTPException(status_code=400, detail=f"Banned pair: '{ban.sophomore}' not in sophomores roster.")
-        if ban.freshman in overridden_fresh:
-            raise HTTPException(status_code=400, detail=f"Banned pair: '{ban.freshman}' is already locked in an override.")
-        if ban.sophomore in overridden_soph:
-            raise HTTPException(status_code=400, detail=f"Banned pair: '{ban.sophomore}' is already locked in an override.")
+        if ban.little not in little_set:
+            raise HTTPException(status_code=400, detail=f"Banned pair: '{ban.little}' not in littles roster.")
+        if ban.big not in big_set:
+            raise HTTPException(status_code=400, detail=f"Banned pair: '{ban.big}' not in bigs roster.")
+        if ban.little in overridden_littles:
+            raise HTTPException(status_code=400, detail=f"Banned pair: '{ban.little}' is already locked in an override.")
+        if ban.big in overridden_bigs:
+            raise HTTPException(status_code=400, detail=f"Banned pair: '{ban.big}' is already locked in an override.")
 
     # Remove banned pairs from preference lists
-    banned_set = {(ban.freshman, ban.sophomore) for ban in req.banned}
-    for freshman, prefs in fresh_prefs.items():
-        fresh_prefs[freshman] = [s for s in prefs if (freshman, s) not in banned_set]
-    for sophomore, prefs in soph_prefs.items():
-        soph_prefs[sophomore] = [f for f in prefs if (f, sophomore) not in banned_set]
+    banned_set = {(ban.little, ban.big) for ban in req.banned}
+    for little, prefs in little_prefs.items():
+        little_prefs[little] = [b for b in prefs if (little, b) not in banned_set]
+    for big, prefs in big_prefs.items():
+        big_prefs[big] = [l for l in prefs if (l, big) not in banned_set]
 
     try:
-        twin_trios_2bigs, twin_trios_2littles, fresh_pool, soph_pool, fresh_prefs, soph_prefs = (
-            select_twin_trios(soph_twin_pairs, fresh_twin_pairs, fresh_pool, soph_pool, fresh_prefs, soph_prefs)
+        twin_trios_2bigs, twin_trios_2littles, little_pool, big_pool, little_prefs, big_prefs = (
+            select_twin_trios(big_twin_pairs, little_twin_pairs, little_pool, big_pool, little_prefs, big_prefs)
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
-    # Select remaining trios based on D
-    D = len(soph_pool) - len(fresh_pool)
-    trios_2bigs, trios_2littles = select_trios(D, fresh_pool, soph_pool, fresh_prefs, soph_prefs)
+    # Compute D and decide whether to create trios
+    D = len(big_pool) - len(little_pool)
+
+    # If config says not to force everyone matched, truncate to equal sizes
+    unmatched_bigs: list[str] = []
+    unmatched_littles: list[str] = []
+    if D > 0 and not req.every_big_needs_little:
+        # Leave D bigs unmatched — trim big pool to match little pool size
+        unmatched_bigs = big_pool[len(little_pool):]
+        big_pool = big_pool[:len(little_pool)]
+        D = 0
+    elif D < 0 and not req.every_little_needs_big:
+        # Leave |D| littles unmatched — trim little pool to match big pool size
+        unmatched_littles = little_pool[len(big_pool):]
+        little_pool = little_pool[:len(big_pool)]
+        D = 0
+
+    trios_2bigs, trios_2littles = select_trios(D, little_pool, big_pool, little_prefs, big_prefs)
 
     # Remove trio members and run 1-to-1 matching
-    trio_fresh_used = (
-        {f for f, _, _ in trios_2bigs}
-        | {f1 for f1, _, _ in trios_2littles}
-        | {f2 for _, f2, _ in trios_2littles}
+    trio_littles_used = (
+        {l for l, _, _ in trios_2bigs}
+        | {l1 for l1, _, _ in trios_2littles}
+        | {l2 for _, l2, _ in trios_2littles}
     )
-    trio_soph_used = (
+    trio_bigs_used = (
         {b1 for _, b1, _ in trios_2bigs}
         | {b2 for _, _, b2 in trios_2bigs}
-        | {s for _, _, s in trios_2littles}
+        | {b for _, _, b in trios_2littles}
     )
-    remaining_fresh = [f for f in fresh_pool if f not in trio_fresh_used]
-    remaining_soph  = [s for s in soph_pool  if s not in trio_soph_used]
+    remaining_littles = [l for l in little_pool if l not in trio_littles_used]
+    remaining_bigs    = [b for b in big_pool    if b not in trio_bigs_used]
 
-    duo_matches = optimize_matching(remaining_fresh, remaining_soph, fresh_prefs, soph_prefs)
+    max_rank = max(req.num_preferences, 1)
+    duo_matches = optimize_matching(
+        remaining_littles, remaining_bigs, little_prefs, big_prefs,
+        big_weight=req.big_weight, max_rank=max_rank,
+    )
 
     # Incorporate overrides into result sets
     override_trios_2bigs:    list[tuple[str, str, str]] = []
     override_trios_2littles: list[tuple[str, str, str]] = []
     override_duos: dict[str, str] = {}
     for ov in req.overrides:
-        if ov.freshman_2:
-            override_trios_2littles.append((ov.freshman_1, ov.freshman_2, ov.big_1))
+        if ov.little_2:
+            override_trios_2littles.append((ov.little_1, ov.little_2, ov.big_1))
         elif ov.big_2:
-            override_trios_2bigs.append((ov.freshman_1, ov.big_1, ov.big_2))
+            override_trios_2bigs.append((ov.little_1, ov.big_1, ov.big_2))
         else:
-            override_duos[ov.freshman_1] = ov.big_1
+            override_duos[ov.little_1] = ov.big_1
 
     all_duos         = {**duo_matches, **override_duos}
     all_trios_2bigs  = twin_trios_2bigs  + trios_2bigs  + override_trios_2bigs
@@ -306,31 +337,34 @@ def run_match(req: MatchRequest) -> MatchResponse:
 
     # Compute satisfaction using original (unfiltered) prefs so scores are accurate
     sat_df = compute_satisfaction(
-        all_duos, all_trios_2bigs, all_trios_2lit, orig_fresh_prefs, orig_soph_prefs
+        all_duos, all_trios_2bigs, all_trios_2lit,
+        orig_little_prefs, orig_big_prefs,
+        big_weight=req.big_weight, max_rank=max_rank,
     )
 
     # Build match list
     matches_out: list[Match] = []
-    for fresh, soph in all_duos.items():
-        matches_out.append(Match(freshman=fresh, freshman_2=None, big_1=soph, big_2=None, trio=False))
-    for fresh, b1, b2 in all_trios_2bigs:
-        matches_out.append(Match(freshman=fresh, freshman_2=None, big_1=b1, big_2=b2, trio=True))
-    for f1, f2, soph in all_trios_2lit:
-        matches_out.append(Match(freshman=f1, freshman_2=f2, big_1=soph, big_2=None, trio=True))
-    matches_out.sort(key=lambda m: m.freshman)
+    for little, big in all_duos.items():
+        matches_out.append(Match(little=little, little_2=None, big_1=big, big_2=None, trio=False))
+    for little, b1, b2 in all_trios_2bigs:
+        matches_out.append(Match(little=little, little_2=None, big_1=b1, big_2=b2, trio=True))
+    for l1, l2, big in all_trios_2lit:
+        matches_out.append(Match(little=l1, little_2=l2, big_1=big, big_2=None, trio=True))
+
+    matches_out.sort(key=lambda m: m.little)
 
     # Build satisfaction list
     sat_out: list[SatisfactionRow] = []
     for _, row in sat_df.iterrows():
         sat_out.append(
             SatisfactionRow(
-                freshman=row["Freshman_1"],
-                freshman_2=None if pd.isna(row["Freshman_2"]) else str(row["Freshman_2"]),
+                little=row["Little_1"],
+                little_2=None if pd.isna(row["Little_2"]) else str(row["Little_2"]),
                 big_1=row["Big_1"],
                 big_2=None if pd.isna(row["Big_2"]) else str(row["Big_2"]),
-                freshman_score=row["Freshman_1_Score"],
-                freshman_2_score=_nan_to_none(row["Freshman_2_Score"]),
-                big_1_score=row["Big_1_Score"],
+                little_score=_nan_to_none(row["Little_1_Score"]),
+                little_2_score=_nan_to_none(row["Little_2_Score"]),
+                big_1_score=_nan_to_none(row["Big_1_Score"]),
                 big_2_score=_nan_to_none(row["Big_2_Score"]),
                 pair_score=row["Pair_Score"],
             )
@@ -341,8 +375,10 @@ def run_match(req: MatchRequest) -> MatchResponse:
     median_score = float(pair_scores.iloc[len(pair_scores) // 2])
     avg_score    = float(pair_scores.mean())
 
-    # Mutual = both primary parties scored >= 80%
-    mutual_mask = (sat_df["Freshman_1_Score"] >= 80) & (sat_df["Big_1_Score"] >= 80)
+    # Mutual = both primary parties scored >= 80% (only when both submitted prefs)
+    l1_scores = sat_df["Little_1_Score"].fillna(-1)
+    b1_scores = sat_df["Big_1_Score"].fillna(-1)
+    mutual_mask  = (l1_scores >= 80) & (b1_scores >= 80)
     mutual_count = int(mutual_mask.sum())
 
     return MatchResponse(
@@ -353,6 +389,8 @@ def run_match(req: MatchRequest) -> MatchResponse:
             average_pair_score=round(avg_score, 1),
             mutual_count=mutual_count,
         ),
+        unmatched_bigs=sorted(unmatched_bigs),
+        unmatched_littles=sorted(unmatched_littles),
     )
 
 
@@ -361,9 +399,9 @@ def parse_csv(file: UploadFile = File(...)) -> list[dict]:
     """
     Parse a participants CSV and return structured person list.
     Accepts two formats:
-      - Standard: columns Name, Rank1, Rank2, Rank3, Rank4, Rank5
-      - Google Form: columns Timestamp, Name, <First choice [of big]>, <Second choice [of big]>, ...
-        (Timestamp is dropped; preference columns are detected by the prefix "First choice")
+      - Standard: columns Name, Rank1, Rank2, ..., RankN (any N)
+      - Google Form: columns Timestamp, Name, <pref col 1>, <pref col 2>, ...
+        (Timestamp is dropped; all columns after Name become preferences)
     """
     try:
         contents = file.file.read()
@@ -373,36 +411,36 @@ def parse_csv(file: UploadFile = File(...)) -> list[dict]:
 
     df.columns = [c.strip() for c in df.columns]
 
-    # Auto-detect Google Form format: has "Timestamp" column or preference cols start with "First choice"
-    is_form_format = "Timestamp" in df.columns or any(
-        c.startswith("First choice") for c in df.columns
-    )
+    # Auto-detect Google Form format: has "Timestamp" column or no RankN columns
+    rank_cols = [c for c in df.columns if c.startswith("Rank") and c[4:].isdigit()]
+    is_form_format = "Timestamp" in df.columns or (not rank_cols and "Name" in df.columns)
 
     if is_form_format:
         # Drop Timestamp
         if "Timestamp" in df.columns:
             df = df.drop(columns=["Timestamp"])
 
-        # All remaining columns after "Name" are the preference columns (in form order)
+        # All remaining columns after "Name" are the preference columns
         other_cols = [c for c in df.columns if c != "Name"]
-        if len(other_cols) < 5:
+        if not other_cols:
             raise HTTPException(
                 status_code=400,
-                detail=f"Google Form CSV must have at least 5 preference columns after 'Name'; found {len(other_cols)}.",
+                detail="CSV must have at least one preference column after 'Name'.",
             )
-        rename_map = {old: new for old, new in zip(other_cols[:5], PREF_COLS)}
+        rename_map = {old: f"Rank{i+1}" for i, old in enumerate(other_cols)}
         df = df.rename(columns=rename_map)
+        rank_cols = [f"Rank{i+1}" for i in range(len(other_cols))]
 
     if "Name" not in df.columns:
         raise HTTPException(status_code=400, detail="CSV must have a 'Name' column.")
-    missing_pref = [c for c in PREF_COLS if c not in df.columns]
-    if missing_pref:
-        raise HTTPException(status_code=400, detail=f"CSV is missing preference columns: {missing_pref}")
+
+    rank_cols = _rank_cols_from_df(df)
+    if not rank_cols:
+        raise HTTPException(status_code=400, detail="CSV has no preference columns (Rank1, Rank2, …).")
 
     df["Name"] = df["Name"].astype(str).str.strip()
-    # Drop rows with blank/nan Name (non-submitters will still be included as long as Name is set)
     df = df[df["Name"].notna() & (df["Name"] != "") & (df["Name"] != "nan")]
-    for col in PREF_COLS:
+    for col in rank_cols:
         df[col] = df[col].astype(str).str.strip().replace("nan", "")
 
     return _df_to_pref_list(df)
@@ -411,8 +449,8 @@ def parse_csv(file: UploadFile = File(...)) -> list[dict]:
 @app.post("/api/parse-overrides-csv")
 def parse_overrides_csv(file: UploadFile = File(...)) -> list[dict]:
     """
-    Parse an overrides CSV with columns: Freshman_1, Freshman_2, Big_1, Big_2
-    (Freshman_2 and Big_2 may be empty). Returns list of OverrideMatch dicts.
+    Parse an overrides CSV with columns: Little_1, Little_2, Big_1, Big_2
+    (Little_2 and Big_2 may be empty). Returns list of OverrideMatch dicts.
     """
     try:
         contents = file.file.read()
@@ -421,36 +459,36 @@ def parse_overrides_csv(file: UploadFile = File(...)) -> list[dict]:
         raise HTTPException(status_code=400, detail=f"Failed to parse CSV: {exc}")
 
     df.columns = [c.strip() for c in df.columns]
-    if "Freshman_1" not in df.columns or "Big_1" not in df.columns:
+    if "Little_1" not in df.columns or "Big_1" not in df.columns:
         raise HTTPException(
             status_code=400,
-            detail="Overrides CSV must have at minimum 'Freshman_1' and 'Big_1' columns.",
+            detail="Overrides CSV must have at minimum 'Little_1' and 'Big_1' columns.",
         )
-    for col in ["Freshman_2", "Big_2"]:
+    for col in ["Little_2", "Big_2"]:
         if col not in df.columns:
             df[col] = ""
-    # normalization helper (shared with main algorithm)
+
     def _normalize_name(val: str) -> str:
         s = str(val).strip()
         s = " ".join(s.split())
         return s.title()
 
-    for col in ["Freshman_1", "Freshman_2", "Big_1", "Big_2"]:
+    for col in ["Little_1", "Little_2", "Big_1", "Big_2"]:
         df[col] = df[col].astype(str).str.strip().replace("nan", "")
         df[col] = df[col].apply(_normalize_name)
 
     result = []
     for _, row in df.iterrows():
-        f2 = row["Freshman_2"] or None
+        l2 = row["Little_2"] or None
         b2 = row["Big_2"] or None
-        if f2 and b2:
+        if l2 and b2:
             raise HTTPException(
                 status_code=400,
-                detail=f"Override row cannot have both Freshman_2 and Big_2 set.",
+                detail="Override row cannot have both Little_2 and Big_2 set.",
             )
         result.append({
-            "freshman_1": row["Freshman_1"],
-            "freshman_2": f2,
+            "little_1": row["Little_1"],
+            "little_2": l2,
             "big_1": row["Big_1"],
             "big_2": b2,
         })

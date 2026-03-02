@@ -1,15 +1,14 @@
 import type { Person } from "../types";
 
-const MAX_PREFS = 5;
-
 interface Props {
   title: string;
   people: Person[];
   otherNames: string[]; // names from the other group, for preference dropdowns
   onChange: (updated: Person[]) => void;
+  numPreferences: number;
 }
 
-export default function PersonTable({ title, people, otherNames, onChange }: Props) {
+export default function PersonTable({ title, people, otherNames, onChange, numPreferences }: Props) {
   function updateName(idx: number, name: string) {
     const next = people.map((p, i) => (i === idx ? { ...p, name } : p));
     onChange(next);
@@ -64,7 +63,7 @@ export default function PersonTable({ title, people, otherNames, onChange }: Pro
           <thead className="bg-gray-50 text-gray-600 uppercase text-xs">
             <tr>
               <th className="px-3 py-2 text-left w-36">Name</th>
-              {Array.from({ length: MAX_PREFS }, (_, i) => (
+              {Array.from({ length: numPreferences }, (_, i) => (
                 <th key={i} className="px-2 py-2 text-left">#{i + 1}</th>
               ))}
               <th className="px-2 py-2 w-8" />
@@ -72,7 +71,6 @@ export default function PersonTable({ title, people, otherNames, onChange }: Pro
           </thead>
           <tbody className="divide-y divide-gray-100">
             {people.map((person, idx) => {
-              // used is computed per-slot via usedInRow below
               return (
                 <tr key={idx} className="hover:bg-gray-50">
                   <td className="px-3 py-1.5">
@@ -84,7 +82,7 @@ export default function PersonTable({ title, people, otherNames, onChange }: Pro
                       className="w-full border border-gray-300 rounded px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-indigo-400"
                     />
                   </td>
-                  {Array.from({ length: MAX_PREFS }, (_, prefIdx) => {
+                  {Array.from({ length: numPreferences }, (_, prefIdx) => {
                     const current = person.preferences[prefIdx] ?? "";
                     const rowUsed = usedInRow(person, prefIdx);
                     return (
@@ -121,7 +119,7 @@ export default function PersonTable({ title, people, otherNames, onChange }: Pro
             {people.length === 0 && (
               <tr>
                 <td
-                  colSpan={MAX_PREFS + 2}
+                  colSpan={numPreferences + 2}
                   className="px-4 py-6 text-center text-gray-400 italic"
                 >
                   No entries yet. Click "+ Add" or upload a CSV.

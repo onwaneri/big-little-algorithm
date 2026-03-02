@@ -1,42 +1,49 @@
 export interface Person {
   name: string;
-  preferences: string[]; // up to 5 names in ranked order
+  preferences: string[];
+}
+
+export interface MatchConfig {
+  everyBigNeedsLittle: boolean | null;   // null = unanswered
+  everyLittleNeedsBig: boolean | null;   // null = unanswered
+  numPreferences: number | null;          // null = unanswered
+  bigWeight: number;                      // 0 = favor littles, 1 = favor bigs (default 0.5)
 }
 
 export interface TwinPair {
   person_1: string;
   person_2: string;
-  group: "sophomore" | "freshman";
+  group: "big" | "little";
 }
 
 export interface BannedPair {
-  freshman: string;
-  sophomore: string;
+  little: string;
+  big: string;
 }
 
 export interface OverrideMatch {
-  freshman_1: string;
-  freshman_2: string | null;  // populated for 2-little trios
+  little_1: string;
+  little_2: string | null;  // populated for 2-little trios
   big_1: string;
-  big_2: string | null;       // populated for 2-big trios
+  big_2: string | null;     // populated for 2-big trios
 }
 
 export interface Match {
-  freshman: string;
-  freshman_2: string | null;  // populated for 2-little trios
+  little: string;
+  little_2: string | null;  // populated for 2-little trios
   big_1: string;
-  big_2: string | null;       // populated for 2-big trios
+  big_2: string | null;     // populated for 2-big trios
   trio: boolean;
 }
 
 export interface SatisfactionRow {
-  freshman: string;
-  freshman_2: string | null;
+  little: string;
+  little_2: string | null;
   big_1: string;
   big_2: string | null;
-  freshman_score: number;
-  freshman_2_score: number | null;
-  big_1_score: number;
+  little_score: number | null;
+  little_2_score: number | null;
+  big_1_score: number | null;
   big_2_score: number | null;
   pair_score: number;
 }
@@ -51,4 +58,6 @@ export interface MatchResult {
   matches: Match[];
   satisfaction: SatisfactionRow[];
   summary: Summary;
+  unmatched_bigs: string[];
+  unmatched_littles: string[];
 }

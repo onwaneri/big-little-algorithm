@@ -1,24 +1,24 @@
 """
-Big-Little Matching Algorithm for Sigma Nu Fraternity
-======================================================
+Big-Little Matching Algorithm
+==============================
 Dynamically handles any participant counts.
 
-  D = len(sophomores) - len(freshmen)
-  D > 0  →  D trios of (1 freshman + 2 bigs)
-  D < 0  →  |D| trios of (2 freshmen + 1 big)
+  D = len(bigs) - len(littles)
+  D > 0  →  D trios of (1 little + 2 bigs)
+  D < 0  →  |D| trios of (2 littles + 1 big)
   D = 0  →  pure 1-to-1, no trios
 
 Manual overrides are read from overrides.csv if present:
-  Columns: Freshman_1, Freshman_2, Big_1, Big_2
-  Leave Freshman_2 or Big_2 empty for duos / 2-big trios.
+  Columns: Little_1, Little_2, Big_1, Big_2
+  Leave Little_2 or Big_2 empty for duos / 2-big trios.
 
 Banned pairs are read from banned_pairs.csv if present:
-  Columns: Freshman, Sophomore
-  Specifies freshman-sophomore pairs that cannot be matched together.
+  Columns: Little, Big
+  Specifies little-big pairs that cannot be matched together.
 
 Input CSVs:
-  sophomores.csv  — columns: Name, Rank1, Rank2, Rank3, Rank4, Rank5
-  freshmen.csv    — columns: Name, Rank1, Rank2, Rank3, Rank4, Rank5
+  bigs.csv     — columns: Name, Rank1, Rank2, …, RankN
+  littles.csv  — columns: Name, Rank1, Rank2, …, RankN
 """
 
 import os
@@ -33,14 +33,13 @@ import sys
 # Configuration
 # ---------------------------------------------------------------------------
 PREF_COLS = ["Rank1", "Rank2", "Rank3", "Rank4", "Rank5"]
-SOPHOMORES_FILE = "PC 25 Big little.csv"
-FRESHMEN_FILE   = "PC 26 Big Little Form.csv"
-OVERRIDES_FILE  = "overrides.csv"
+BIGS_FILE         = "bigs.csv"
+LITTLES_FILE      = "littles.csv"
+OVERRIDES_FILE    = "overrides.csv"
 BANNED_PAIRS_FILE = "banned_pairs.csv"
-OUTPUT_FILE     = "final_matches.csv"
-FUZZY_CUTOFF    = 0.75
-MAX_RANK        = len(PREF_COLS)  # 5
-ALPHA           = 0.1
+OUTPUT_FILE       = "final_matches.csv"
+FUZZY_CUTOFF      = 0.75
+MAX_RANK          = len(PREF_COLS)  # default 5; functions accept max_rank parameter
 
 
 def _normalize_name(name: str) -> str:
@@ -63,11 +62,32 @@ def _normalize_name(name: str) -> str:
 # Score helpers
 # ---------------------------------------------------------------------------
 
-def rank_to_score(rank: int | None) -> float:
-    """Rank 1 → 100%, Rank 2 → 80%, …, Rank 5 → 20%, Unranked → 0%."""
+def rank_to_score(rank: int | None, max_rank: int = MAX_RANK) -> float:
+    """Rank 1 → 100%, Rank N → (100/N)%, Unranked → 0%."""
     if rank is None:
         return 0.0
-    return (MAX_RANK + 1 - rank) / MAX_RANK * 100.0
+    return (max_rank + 1 - rank) / max_rank * 100.0
+
+
+def _weighted_pair_score(
+    ls: float,
+    bs: float,
+    big_weight: float,
+    little_has_prefs: bool,
+    big_has_prefs: bool,
+) -> float:
+    """Weighted pair score that excludes parties with no preferences.
+
+    If only one party submitted preferences, their score determines the pair score.
+    If neither submitted preferences, returns a neutral 50.0.
+    """
+    if little_has_prefs and big_has_prefs:
+        return (1.0 - big_weight) * ls + big_weight * bs
+    elif little_has_prefs:
+        return ls
+    elif big_has_prefs:
+        return bs
+    return 50.0
 
 
 # ---------------------------------------------------------------------------
@@ -156,50 +176,50 @@ def load_overrides(filepath: str, fresh_names: set, soph_names: set) -> list[dic
         sys.exit(f"[ERROR] Could not read {filepath}: {e}")
 
     df.columns = [c.strip() for c in df.columns]
-    required = ["Freshman_1", "Big_1"]
+    required = ["Little_1", "Big_1"]
     missing = [c for c in required if c not in df.columns]
     if missing:
-        sys.exit(f"[ERROR] {filepath} must have columns: Freshman_1, Freshman_2, Big_1, Big_2")
+        sys.exit(f"[ERROR] {filepath} must have columns: Little_1, Little_2, Big_1, Big_2")
 
     # Fill optional columns
-    for col in ["Freshman_2", "Big_2"]:
+    for col in ["Little_2", "Big_2"]:
         if col not in df.columns:
             df[col] = ""
-    for col in ["Freshman_1", "Freshman_2", "Big_1", "Big_2"]:
+    for col in ["Little_1", "Little_2", "Big_1", "Big_2"]:
         df[col] = df[col].astype(str).str.strip().replace("nan", "")
         df[col] = df[col].apply(_normalize_name)
 
     overrides = []
     for _, row in df.iterrows():
-        f1 = row["Freshman_1"]
-        f2 = row["Freshman_2"] or None
+        l1 = row["Little_1"]
+        l2 = row["Little_2"] or None
         b1 = row["Big_1"]
         b2 = row["Big_2"] or None
 
         # Validate names
         errors = []
-        if f1 not in fresh_names:
-            errors.append(f"Freshman '{f1}' not in freshmen roster")
-        if f2 and f2 not in fresh_names:
-            errors.append(f"Freshman '{f2}' not in freshmen roster")
+        if l1 not in fresh_names:
+            errors.append(f"Little '{l1}' not in littles roster")
+        if l2 and l2 not in fresh_names:
+            errors.append(f"Little '{l2}' not in littles roster")
         if b1 not in soph_names:
-            errors.append(f"Big '{b1}' not in sophomores roster")
+            errors.append(f"Big '{b1}' not in bigs roster")
         if b2 and b2 not in soph_names:
-            errors.append(f"Big '{b2}' not in sophomores roster")
+            errors.append(f"Big '{b2}' not in bigs roster")
         if errors:
             sys.exit(f"[ERROR] Override row has invalid names: {'; '.join(errors)}")
 
         # Must be duo, 2-big trio, or 2-little trio — not ambiguous
-        if f2 and b2:
+        if l2 and b2:
             sys.exit(
-                f"[ERROR] Override row has both Freshman_2 and Big_2 set. "
-                f"Each override must be a duo, 2-big trio (f1+b1+b2), "
-                f"or 2-little trio (f1+f2+b1)."
+                f"[ERROR] Override row has both Little_2 and Big_2 set. "
+                f"Each override must be a duo, 2-big trio (l1+b1+b2), "
+                f"or 2-little trio (l1+l2+b1)."
             )
 
-        overrides.append({"freshman_1": f1, "freshman_2": f2, "big_1": b1, "big_2": b2})
-        kind = "duo" if not f2 and not b2 else ("2-big trio" if b2 else "2-little trio")
-        print(f"[INFO] Override ({kind}): {f1}" + (f" & {f2}" if f2 else "") +
+        overrides.append({"little_1": l1, "little_2": l2, "big_1": b1, "big_2": b2})
+        kind = "duo" if not l2 and not b2 else ("2-big trio" if b2 else "2-little trio")
+        print(f"[INFO] Override ({kind}): {l1}" + (f" & {l2}" if l2 else "") +
               f" ↔ {b1}" + (f" & {b2}" if b2 else ""))
 
     return overrides
@@ -220,34 +240,34 @@ def load_banned_pairs(filepath: str, fresh_names: set, soph_names: set) -> list[
         sys.exit(f"[ERROR] Could not read {filepath}: {e}")
 
     df.columns = [c.strip() for c in df.columns]
-    required = ["Freshman", "Sophomore"]
+    required = ["Little", "Big"]
     missing = [c for c in required if c not in df.columns]
     if missing:
-        sys.exit(f"[ERROR] {filepath} must have columns: Freshman, Sophomore")
+        sys.exit(f"[ERROR] {filepath} must have columns: Little, Big")
 
-    for col in ["Freshman", "Sophomore"]:
+    for col in ["Little", "Big"]:
         df[col] = df[col].astype(str).str.strip().replace("nan", "")
         df[col] = df[col].apply(_normalize_name)
 
     banned = []
     for _, row in df.iterrows():
-        fresh = row["Freshman"]
-        soph = row["Sophomore"]
+        little = row["Little"]
+        big    = row["Big"]
 
-        if not fresh or not soph:
+        if not little or not big:
             continue
 
         # Validate names
         errors = []
-        if fresh not in fresh_names:
-            errors.append(f"Freshman '{fresh}' not in freshmen roster")
-        if soph not in soph_names:
-            errors.append(f"Sophomore '{soph}' not in sophomores roster")
+        if little not in fresh_names:
+            errors.append(f"Little '{little}' not in littles roster")
+        if big not in soph_names:
+            errors.append(f"Big '{big}' not in bigs roster")
         if errors:
             sys.exit(f"[ERROR] Banned pair row has invalid names: {'; '.join(errors)}")
 
-        banned.append({"freshman": fresh, "sophomore": soph})
-        print(f"[INFO] Banned pair: {fresh!r} ↔ {soph!r}")
+        banned.append({"little": little, "big": big})
+        print(f"[INFO] Banned pair: {little!r} ↔ {big!r}")
 
     return banned
 
@@ -331,7 +351,7 @@ def mutual_score(
     soph: str,
     fresh_prefs: dict[str, list[str]],
     soph_prefs: dict[str, list[str]],
-    max_rank: int = MAX_RANK,
+    max_rank: int = 5,
 ) -> float:
     """
     Combined mutual preference strength (lower = more mutually preferred).
@@ -537,31 +557,34 @@ def select_twin_trios(
 # ---------------------------------------------------------------------------
 
 def optimize_matching(
-    freshmen: list[str],
-    sophomores: list[str],
-    fresh_prefs: dict[str, list[str]],
-    soph_prefs: dict[str, list[str]],
+    littles: list[str],
+    bigs: list[str],
+    little_prefs: dict[str, list[str]],
+    big_prefs: dict[str, list[str]],
+    big_weight: float = 0.5,
+    max_rank: int = MAX_RANK,
 ) -> dict[str, str]:
     """
     Find the 1-to-1 matching that maximises the median pair score.
 
-    Pair score = fs * bs / 100 + ALPHA * (fs + bs) / 2
-    Returns {freshman -> sophomore} mapping.
+    Pair score = big_weight * big_score + (1 - big_weight) * little_score.
+    Parties with no preferences are excluded from their half of the score.
+    Returns {little -> big} mapping.
     """
-    if not freshmen:
+    if not littles:
         return {}
 
-    n = len(freshmen)
+    n = len(littles)
     scores = np.zeros((n, n))
-    for i, fresh in enumerate(freshmen):
-        fp = fresh_prefs.get(fresh, [])
-        for j, soph in enumerate(sophomores):
-            sp = soph_prefs.get(soph, [])
-            r_fresh = fp.index(soph) + 1 if soph in fp else None
-            r_soph  = sp.index(fresh) + 1 if fresh in sp else None
-            fs = rank_to_score(r_fresh)
-            bs = rank_to_score(r_soph)
-            scores[i, j] = fs * bs / 100 + ALPHA * (fs + bs) / 2
+    for i, little in enumerate(littles):
+        lp = little_prefs.get(little, [])
+        for j, big in enumerate(bigs):
+            bp = big_prefs.get(big, [])
+            r_little = lp.index(big) + 1 if big in lp else None
+            r_big    = bp.index(little) + 1 if little in bp else None
+            ls = rank_to_score(r_little, max_rank)
+            bs = rank_to_score(r_big, max_rank)
+            scores[i, j] = _weighted_pair_score(ls, bs, big_weight, bool(lp), bool(bp))
 
     target = (n + 1) // 2
     distinct = sorted(set(scores.flatten()), reverse=True)
@@ -576,7 +599,7 @@ def optimize_matching(
     BIG = 10_000.0
     final = np.where(scores >= best_t - 1e-9, BIG + scores, scores)
     row_ind, col_ind = linear_sum_assignment(-final)
-    return {freshmen[i]: sophomores[j] for i, j in zip(row_ind, col_ind)}
+    return {littles[i]: bigs[j] for i, j in zip(row_ind, col_ind)}
 
 
 # ---------------------------------------------------------------------------
@@ -587,79 +610,100 @@ def compute_satisfaction(
     duo_matches: dict[str, str],
     trios_2bigs: list[tuple[str, str, str]],
     trios_2littles: list[tuple[str, str, str]],
-    fresh_prefs: dict[str, list[str]],
-    soph_prefs: dict[str, list[str]],
+    little_prefs: dict[str, list[str]],
+    big_prefs: dict[str, list[str]],
+    big_weight: float = 0.5,
+    max_rank: int = MAX_RANK,
 ) -> pd.DataFrame:
     """
     One row per match. Unified schema:
-      Freshman_1, Freshman_2, Big_1, Big_2,
-      Freshman_1_Score, Freshman_2_Score, Big_1_Score, Big_2_Score,
+      Little_1, Little_2, Big_1, Big_2,
+      Little_1_Score, Little_2_Score, Big_1_Score, Big_2_Score,
       Pair_Score, Match_Type
-    Empty/None where not applicable.
+    Score is None when the person submitted no preferences at all.
     """
     rows = []
 
     # Regular 1-to-1 duos
-    for fresh, soph in duo_matches.items():
-        fp = fresh_prefs.get(fresh, [])
-        sp = soph_prefs.get(soph, [])
-        r_f = fp.index(soph) + 1 if soph in fp else None
-        r_s = sp.index(fresh) + 1 if fresh in sp else None
-        fs = rank_to_score(r_f)
-        bs = rank_to_score(r_s)
+    for little, big in duo_matches.items():
+        lp = little_prefs.get(little, [])
+        bp = big_prefs.get(big, [])
+        r_l = lp.index(big) + 1 if big in lp else None
+        r_b = bp.index(little) + 1 if little in bp else None
+        ls = rank_to_score(r_l, max_rank)
+        bs = rank_to_score(r_b, max_rank)
         rows.append({
-            "Freshman_1": fresh, "Freshman_2": None,
-            "Big_1": soph, "Big_2": None,
-            "Freshman_1_Score": fs, "Freshman_2_Score": None,
-            "Big_1_Score": bs, "Big_2_Score": None,
-            "Pair_Score": fs * bs / 100 + ALPHA * (fs + bs) / 2,
+            "Little_1": little, "Little_2": None,
+            "Big_1": big, "Big_2": None,
+            "Little_1_Score": ls if lp else None,
+            "Little_2_Score": None,
+            "Big_1_Score": bs if bp else None,
+            "Big_2_Score": None,
+            "Pair_Score": _weighted_pair_score(ls, bs, big_weight, bool(lp), bool(bp)),
             "Match_Type": "Duo",
         })
 
-    # 2-big trios: (freshman, big1, big2)
-    for fresh, b1, b2 in trios_2bigs:
-        fp  = fresh_prefs.get(fresh, [])
-        sp1 = soph_prefs.get(b1, [])
-        sp2 = soph_prefs.get(b2, [])
-        r_f1 = fp.index(b1) + 1 if b1 in fp else None
-        r_f2 = fp.index(b2) + 1 if b2 in fp else None
-        r_b1 = sp1.index(fresh) + 1 if fresh in sp1 else None
-        r_b2 = sp2.index(fresh) + 1 if fresh in sp2 else None
-        fs  = (rank_to_score(r_f1) + rank_to_score(r_f2)) / 2
-        b1s = rank_to_score(r_b1)
-        b2s = rank_to_score(r_b2)
+    # 2-big trios: (little, big1, big2)
+    for little, b1, b2 in trios_2bigs:
+        lp  = little_prefs.get(little, [])
+        bp1 = big_prefs.get(b1, [])
+        bp2 = big_prefs.get(b2, [])
+        r_l1 = lp.index(b1) + 1 if b1 in lp else None
+        r_l2 = lp.index(b2) + 1 if b2 in lp else None
+        r_b1 = bp1.index(little) + 1 if little in bp1 else None
+        r_b2 = bp2.index(little) + 1 if little in bp2 else None
+        # little score: average across both bigs
+        ls  = (rank_to_score(r_l1, max_rank) + rank_to_score(r_l2, max_rank)) / 2
+        b1s = rank_to_score(r_b1, max_rank)
+        b2s = rank_to_score(r_b2, max_rank)
+        # Combined big score: average of both bigs' scores
+        bigs_have_prefs = bool(bp1) or bool(bp2)
+        bs_combined = (
+            ((b1s if bp1 else 0) + (b2s if bp2 else 0)) /
+            max(1, int(bool(bp1)) + int(bool(bp2)))
+        )
         rows.append({
-            "Freshman_1": fresh, "Freshman_2": None,
+            "Little_1": little, "Little_2": None,
             "Big_1": b1, "Big_2": b2,
-            "Freshman_1_Score": fs, "Freshman_2_Score": None,
-            "Big_1_Score": b1s, "Big_2_Score": b2s,
-            "Pair_Score": fs * b1s * b2s / 10000 + ALPHA * (fs + b1s + b2s) / 3,
+            "Little_1_Score": ls if lp else None,
+            "Little_2_Score": None,
+            "Big_1_Score": b1s if bp1 else None,
+            "Big_2_Score": b2s if bp2 else None,
+            "Pair_Score": _weighted_pair_score(ls, bs_combined, big_weight, bool(lp), bigs_have_prefs),
             "Match_Type": "Trio",
         })
 
-    # 2-little trios: (fresh1, fresh2, soph)
-    for f1, f2, soph in trios_2littles:
-        fp1 = fresh_prefs.get(f1, [])
-        fp2 = fresh_prefs.get(f2, [])
-        sp  = soph_prefs.get(soph, [])
-        r_f1 = fp1.index(soph) + 1 if soph in fp1 else None
-        r_f2 = fp2.index(soph) + 1 if soph in fp2 else None
-        r_b1 = sp.index(f1) + 1 if f1 in sp else None
-        r_b2 = sp.index(f2) + 1 if f2 in sp else None
-        f1s = rank_to_score(r_f1)
-        f2s = rank_to_score(r_f2)
-        bs  = (rank_to_score(r_b1) + rank_to_score(r_b2)) / 2
+    # 2-little trios: (little1, little2, big)
+    for l1, l2, big in trios_2littles:
+        lp1 = little_prefs.get(l1, [])
+        lp2 = little_prefs.get(l2, [])
+        bp  = big_prefs.get(big, [])
+        r_l1 = lp1.index(big) + 1 if big in lp1 else None
+        r_l2 = lp2.index(big) + 1 if big in lp2 else None
+        r_b1 = bp.index(l1) + 1 if l1 in bp else None
+        r_b2 = bp.index(l2) + 1 if l2 in bp else None
+        l1s = rank_to_score(r_l1, max_rank)
+        l2s = rank_to_score(r_l2, max_rank)
+        bs  = (rank_to_score(r_b1, max_rank) + rank_to_score(r_b2, max_rank)) / 2
+        # Combined little score: average across both littles
+        littles_have_prefs = bool(lp1) or bool(lp2)
+        ls_combined = (
+            ((l1s if lp1 else 0) + (l2s if lp2 else 0)) /
+            max(1, int(bool(lp1)) + int(bool(lp2)))
+        )
         rows.append({
-            "Freshman_1": f1, "Freshman_2": f2,
-            "Big_1": soph, "Big_2": None,
-            "Freshman_1_Score": f1s, "Freshman_2_Score": f2s,
-            "Big_1_Score": bs, "Big_2_Score": None,
-            "Pair_Score": f1s * f2s * bs / 10000 + ALPHA * (f1s + f2s + bs) / 3,
+            "Little_1": l1, "Little_2": l2,
+            "Big_1": big, "Big_2": None,
+            "Little_1_Score": l1s if lp1 else None,
+            "Little_2_Score": l2s if lp2 else None,
+            "Big_1_Score": bs if bp else None,
+            "Big_2_Score": None,
+            "Pair_Score": _weighted_pair_score(ls_combined, bs, big_weight, littles_have_prefs, bool(bp)),
             "Match_Type": "Trio",
         })
 
     df = pd.DataFrame(rows)
-    return df.sort_values("Freshman_1").reset_index(drop=True)
+    return df.sort_values("Little_1").reset_index(drop=True)
 
 
 def print_satisfaction_summary(sat_df: pd.DataFrame) -> None:
@@ -668,22 +712,18 @@ def print_satisfaction_summary(sat_df: pd.DataFrame) -> None:
     print("  SATISFACTION SUMMARY")
     print("=" * 58)
 
-    score_labels = {rank_to_score(r): f"{rank_to_score(r):.0f}%" for r in range(1, MAX_RANK + 1)}
-    score_labels[0.0] = "0% (Unranked)"
-
     def show_dist(scores: pd.Series, label: str) -> None:
         scores = scores.dropna()
         print(f"\n  {label} ({len(scores)} entries):")
         for score, cnt in scores.value_counts().sort_index(ascending=False).items():
-            lbl = score_labels.get(round(score, 4), f"{score:.1f}%")
-            print(f"    {lbl:15s} : {cnt:>3} person(s)")
+            print(f"    {score:.1f}%  : {cnt:>3} person(s)")
         print(f"    Average score : {scores.mean():.1f}%")
 
     show_dist(sat_df["Pair_Score"], "Pair scores")
-    fresh_scores = pd.concat([sat_df["Freshman_1_Score"], sat_df["Freshman_2_Score"]]).dropna()
-    show_dist(fresh_scores, "Freshmen")
-    soph_scores = pd.concat([sat_df["Big_1_Score"], sat_df["Big_2_Score"]]).dropna()
-    show_dist(soph_scores, "Sophomores")
+    little_scores = pd.concat([sat_df["Little_1_Score"], sat_df["Little_2_Score"]]).dropna()
+    show_dist(little_scores, "Littles")
+    big_scores = pd.concat([sat_df["Big_1_Score"], sat_df["Big_2_Score"]]).dropna()
+    show_dist(big_scores, "Bigs")
 
     pair_scores = sat_df["Pair_Score"].sort_values().reset_index(drop=True)
     median = pair_scores.iloc[len(pair_scores) // 2]
@@ -703,13 +743,13 @@ def build_output(
 ) -> pd.DataFrame:
     """Unified output DataFrame. Match_Type is 'Duo' or 'Trio'."""
     rows = []
-    for fresh, soph in duo_matches.items():
-        rows.append({"Freshman_1": fresh, "Freshman_2": "", "Big_1": soph, "Big_2": "", "Match_Type": "Duo"})
-    for fresh, b1, b2 in trios_2bigs:
-        rows.append({"Freshman_1": fresh, "Freshman_2": "", "Big_1": b1, "Big_2": b2, "Match_Type": "Trio"})
-    for f1, f2, soph in trios_2littles:
-        rows.append({"Freshman_1": f1, "Freshman_2": f2, "Big_1": soph, "Big_2": "", "Match_Type": "Trio"})
-    return pd.DataFrame(rows).sort_values("Freshman_1").reset_index(drop=True)
+    for little, big in duo_matches.items():
+        rows.append({"Little_1": little, "Little_2": "", "Big_1": big, "Big_2": "", "Match_Type": "Duo"})
+    for little, b1, b2 in trios_2bigs:
+        rows.append({"Little_1": little, "Little_2": "", "Big_1": b1, "Big_2": b2, "Match_Type": "Trio"})
+    for l1, l2, big in trios_2littles:
+        rows.append({"Little_1": l1, "Little_2": l2, "Big_1": big, "Big_2": "", "Match_Type": "Trio"})
+    return pd.DataFrame(rows).sort_values("Little_1").reset_index(drop=True)
 
 
 # ---------------------------------------------------------------------------
@@ -718,54 +758,54 @@ def build_output(
 
 def main() -> None:
     print("\n====================================================")
-    print("   Sigma Nu Big-Little Matching Algorithm")
+    print("   Big-Little Matching Algorithm")
     print("====================================================\n")
 
     # 1. Load data
-    sophs_df  = load_form_csv(SOPHOMORES_FILE, "Sophomores")
-    fresh_df  = load_form_csv(FRESHMEN_FILE, "Freshmen")
-    soph_names = set(sophs_df["Name"])
-    fresh_names = set(fresh_df["Name"])
+    bigs_df    = load_form_csv(BIGS_FILE, "Bigs")
+    littles_df = load_form_csv(LITTLES_FILE, "Littles")
+    big_names    = set(bigs_df["Name"])
+    little_names = set(littles_df["Name"])
 
     # 2. Load manual overrides
-    overrides = load_overrides(OVERRIDES_FILE, fresh_names, soph_names)
-    overridden_fresh = set()
-    overridden_soph  = set()
+    overrides = load_overrides(OVERRIDES_FILE, little_names, big_names)
+    overridden_littles = set()
+    overridden_bigs    = set()
     for ov in overrides:
-        overridden_fresh.add(ov["freshman_1"])
-        if ov["freshman_2"]:
-            overridden_fresh.add(ov["freshman_2"])
-        overridden_soph.add(ov["big_1"])
+        overridden_littles.add(ov["little_1"])
+        if ov["little_2"]:
+            overridden_littles.add(ov["little_2"])
+        overridden_bigs.add(ov["big_1"])
         if ov["big_2"]:
-            overridden_soph.add(ov["big_2"])
+            overridden_bigs.add(ov["big_2"])
 
     # 3. Detect and correct name mismatches
-    print("\n[INFO] Checking for name mismatches in Freshman rankings...")
-    fresh_df = apply_corrections(fresh_df, check_name_mismatches(fresh_df, soph_names, "Freshman", "Sophomore"))
-    print("[INFO] Checking for name mismatches in Sophomore rankings...")
-    sophs_df = apply_corrections(sophs_df, check_name_mismatches(sophs_df, fresh_names, "Sophomore", "Freshman"))
+    print("\n[INFO] Checking for name mismatches in Little rankings...")
+    littles_df = apply_corrections(littles_df, check_name_mismatches(littles_df, big_names, "Little", "Big"))
+    print("[INFO] Checking for name mismatches in Big rankings...")
+    bigs_df = apply_corrections(bigs_df, check_name_mismatches(bigs_df, little_names, "Big", "Little"))
 
     # 4. Build preference lists
-    fresh_prefs = build_preference_lists(fresh_df, soph_names)
-    soph_prefs  = build_preference_lists(sophs_df, fresh_names)
+    little_prefs = build_preference_lists(littles_df, big_names)
+    big_prefs    = build_preference_lists(bigs_df, little_names)
 
     # 4a. Load and apply banned pairs
-    banned = load_banned_pairs(BANNED_PAIRS_FILE, fresh_names, soph_names)
-    banned_set = {(ban["freshman"], ban["sophomore"]) for ban in banned}
-    for freshman, prefs in fresh_prefs.items():
-        fresh_prefs[freshman] = [s for s in prefs if (freshman, s) not in banned_set]
-    for sophomore, prefs in soph_prefs.items():
-        soph_prefs[sophomore] = [f for f in prefs if (f, sophomore) not in banned_set]
+    banned = load_banned_pairs(BANNED_PAIRS_FILE, little_names, big_names)
+    banned_set = {(ban["little"], ban["big"]) for ban in banned}
+    for little, prefs in little_prefs.items():
+        little_prefs[little] = [b for b in prefs if (little, b) not in banned_set]
+    for big, prefs in big_prefs.items():
+        big_prefs[big] = [l for l in prefs if (l, big) not in banned_set]
 
     # 5. Remove overridden members from the pools and preference lists
-    fresh_pool = [f for f in fresh_names if f not in overridden_fresh]
-    soph_pool  = [s for s in soph_names  if s not in overridden_soph]
-    all_override_names = overridden_fresh | overridden_soph
-    fresh_prefs = remove_from_prefs(fresh_prefs, all_override_names)
-    soph_prefs  = remove_from_prefs(soph_prefs,  all_override_names)
+    little_pool = [l for l in little_names if l not in overridden_littles]
+    big_pool    = [b for b in big_names    if b not in overridden_bigs]
+    all_override_names = overridden_littles | overridden_bigs
+    little_prefs = remove_from_prefs(little_prefs, all_override_names)
+    big_prefs    = remove_from_prefs(big_prefs,    all_override_names)
 
     # 6. Compute D and select trios
-    D = len(soph_pool) - len(fresh_pool)
+    D = len(big_pool) - len(little_pool)
     if D > 0:
         print(f"\n[INFO] D={D}: selecting {D} trio(s) of (1 little + 2 bigs)...")
     elif D < 0:
@@ -773,38 +813,38 @@ def main() -> None:
     else:
         print("\n[INFO] D=0: equal counts — pure 1-to-1 matching, no trios.")
 
-    trios_2bigs, trios_2littles = select_trios(D, fresh_pool, soph_pool, fresh_prefs, soph_prefs)
+    trios_2bigs, trios_2littles = select_trios(D, little_pool, big_pool, little_prefs, big_prefs)
 
-    for fresh, b1, b2 in trios_2bigs:
-        print(f"[INFO] 2-big trio: {fresh!r} ↔ {b1!r} & {b2!r}")
-    for f1, f2, soph in trios_2littles:
-        print(f"[INFO] 2-little trio: {f1!r} & {f2!r} ↔ {soph!r}")
+    for little, b1, b2 in trios_2bigs:
+        print(f"[INFO] 2-big trio: {little!r} ↔ {b1!r} & {b2!r}")
+    for l1, l2, big in trios_2littles:
+        print(f"[INFO] 2-little trio: {l1!r} & {l2!r} ↔ {big!r}")
 
     # 7. Remove trio members from pool, then run 1-to-1 matching
-    trio_fresh_used = {f for f, _, _ in trios_2bigs} | {f1 for f1, _, _ in trios_2littles} | {f2 for _, f2, _ in trios_2littles}
-    trio_soph_used  = {b1 for _, b1, _ in trios_2bigs} | {b2 for _, _, b2 in trios_2bigs} | {s for _, _, s in trios_2littles}
-    remaining_fresh = [f for f in fresh_pool if f not in trio_fresh_used]
-    remaining_soph  = [s for s in soph_pool  if s not in trio_soph_used]
+    trio_littles_used = {l for l, _, _ in trios_2bigs} | {l1 for l1, _, _ in trios_2littles} | {l2 for _, l2, _ in trios_2littles}
+    trio_bigs_used    = {b1 for _, b1, _ in trios_2bigs} | {b2 for _, _, b2 in trios_2bigs} | {b for _, _, b in trios_2littles}
+    remaining_littles = [l for l in little_pool if l not in trio_littles_used]
+    remaining_bigs    = [b for b in big_pool    if b not in trio_bigs_used]
 
-    assert len(remaining_fresh) == len(remaining_soph), (
-        f"Pool mismatch after trio removal: {len(remaining_fresh)} fresh vs {len(remaining_soph)} sophs"
+    assert len(remaining_littles) == len(remaining_bigs), (
+        f"Pool mismatch after trio removal: {len(remaining_littles)} littles vs {len(remaining_bigs)} bigs"
     )
 
-    print(f"[INFO] Optimising {len(remaining_fresh)} 1-to-1 pairings...")
-    duo_matches = optimize_matching(remaining_fresh, remaining_soph, fresh_prefs, soph_prefs)
+    print(f"[INFO] Optimising {len(remaining_littles)} 1-to-1 pairings...")
+    duo_matches = optimize_matching(remaining_littles, remaining_bigs, little_prefs, big_prefs)
 
     # 8. Incorporate overrides into the match lists
-    override_trios_2bigs:   list[tuple[str, str, str]] = []
+    override_trios_2bigs:    list[tuple[str, str, str]] = []
     override_trios_2littles: list[tuple[str, str, str]] = []
     override_duos: dict[str, str] = {}
     for ov in overrides:
-        f1, f2, b1, b2 = ov["freshman_1"], ov["freshman_2"], ov["big_1"], ov["big_2"]
-        if f2:
-            override_trios_2littles.append((f1, f2, b1))
+        l1, l2, b1, b2 = ov["little_1"], ov["little_2"], ov["big_1"], ov["big_2"]
+        if l2:
+            override_trios_2littles.append((l1, l2, b1))
         elif b2:
-            override_trios_2bigs.append((f1, b1, b2))
+            override_trios_2bigs.append((l1, b1, b2))
         else:
-            override_duos[f1] = b1
+            override_duos[l1] = b1
 
     all_duos        = {**duo_matches, **override_duos}
     all_trios_2bigs = trios_2bigs + override_trios_2bigs
@@ -812,7 +852,7 @@ def main() -> None:
 
     # 9. Build output and satisfaction scores
     output_df = build_output(all_duos, all_trios_2bigs, all_trios_2lit)
-    sat_df    = compute_satisfaction(all_duos, all_trios_2bigs, all_trios_2lit, fresh_prefs, soph_prefs)
+    sat_df    = compute_satisfaction(all_duos, all_trios_2bigs, all_trios_2lit, little_prefs, big_prefs)
 
     # 10. Print and save
     print("\n[RESULTS] Final Pairings:")

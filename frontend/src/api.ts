@@ -1,23 +1,28 @@
 import axios from "axios";
-import type { MatchResult, OverrideMatch, Person, TwinPair, BannedPair } from "./types";
+import type { MatchConfig, MatchResult, OverrideMatch, Person, TwinPair, BannedPair } from "./types";
 
 // In production the frontend is served by FastAPI on the same domain,
 // so relative URLs work. In local dev, Vite proxies /api/* to :8000.
 const BASE = "";
 
 export async function runMatch(
-  freshmen: Person[],
-  sophomores: Person[],
+  littles: Person[],
+  bigs: Person[],
   overrides: OverrideMatch[] = [],
   twins: TwinPair[] = [],
-  banned: BannedPair[] = []
+  banned: BannedPair[] = [],
+  config: MatchConfig
 ): Promise<MatchResult> {
   const { data } = await axios.post<MatchResult>(`${BASE}/api/match`, {
-    freshmen,
-    sophomores,
+    littles,
+    bigs,
     overrides,
     twins,
     banned,
+    big_weight: config.bigWeight,
+    every_big_needs_little: config.everyBigNeedsLittle ?? true,
+    every_little_needs_big: config.everyLittleNeedsBig ?? true,
+    num_preferences: config.numPreferences ?? 5,
   });
   return data;
 }

@@ -3,22 +3,22 @@ import type { Match } from "../types";
 
 interface Props {
   matches: Match[];
-  allFreshmen: string[];
-  allSophomores: string[];
+  allLittles: string[];
+  allBigs: string[];
   onApply: (editedMatches: Match[]) => void;
   isLoading?: boolean;
 }
 
 export default function EditableMatchesTable({
   matches,
-  allFreshmen,
-  allSophomores,
+  allLittles,
+  allBigs,
   onApply,
   isLoading = false,
 }: Props) {
   const [edited, setEdited] = useState<Match[]>(matches);
   const [hasChanges, setHasChanges] = useState(false);
-  const has2little = edited.some((m) => m.freshman_2);
+  const has2little = edited.some((m) => m.little_2);
 
   function updateMatch(idx: number, patch: Partial<Match>) {
     const updated = edited.map((m, i) =>
@@ -79,11 +79,11 @@ export default function EditableMatchesTable({
                 {/* Little 1 */}
                 <td className="px-4 py-2">
                   <select
-                    value={m.freshman}
-                    onChange={(e) => updateMatch(idx, { freshman: e.target.value })}
+                    value={m.little}
+                    onChange={(e) => updateMatch(idx, { little: e.target.value })}
                     className="w-full border border-gray-300 rounded px-2 py-1 text-sm bg-white focus:outline-none focus:ring-1 focus:ring-indigo-400"
                   >
-                    {allFreshmen.map((f) => (
+                    {allLittles.map((f) => (
                       <option key={f} value={f}>
                         {f}
                       </option>
@@ -93,13 +93,13 @@ export default function EditableMatchesTable({
                 {/* Little 2 */}
                 {has2little && (
                   <td className="px-4 py-2">
-                    {m.freshman_2 ? (
+                    {m.little_2 ? (
                       <select
-                        value={m.freshman_2}
-                        onChange={(e) => updateMatch(idx, { freshman_2: e.target.value })}
+                        value={m.little_2}
+                        onChange={(e) => updateMatch(idx, { little_2: e.target.value })}
                         className="w-full border border-gray-300 rounded px-2 py-1 text-sm bg-white focus:outline-none focus:ring-1 focus:ring-indigo-400"
                       >
-                        {allFreshmen.map((f) => (
+                        {allLittles.map((f) => (
                           <option key={f} value={f}>
                             {f}
                           </option>
@@ -117,7 +117,7 @@ export default function EditableMatchesTable({
                     onChange={(e) => updateMatch(idx, { big_1: e.target.value })}
                     className="w-full border border-gray-300 rounded px-2 py-1 text-sm bg-white focus:outline-none focus:ring-1 focus:ring-indigo-400"
                   >
-                    {allSophomores.map((s) => (
+                    {allBigs.map((s) => (
                       <option key={s} value={s}>
                         {s}
                       </option>
@@ -132,7 +132,7 @@ export default function EditableMatchesTable({
                       onChange={(e) => updateMatch(idx, { big_2: e.target.value })}
                       className="w-full border border-gray-300 rounded px-2 py-1 text-sm bg-white focus:outline-none focus:ring-1 focus:ring-indigo-400"
                     >
-                      {allSophomores.map((s) => (
+                      {allBigs.map((s) => (
                         <option key={s} value={s}>
                           {s}
                         </option>

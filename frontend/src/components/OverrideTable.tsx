@@ -2,14 +2,14 @@ import type { OverrideMatch } from "../types";
 
 interface Props {
   overrides: OverrideMatch[];
-  freshNames: string[];
-  sophNames: string[];
+  littleNames: string[];
+  bigNames: string[];
   onChange: (updated: OverrideMatch[]) => void;
 }
 
-const EMPTY: OverrideMatch = { freshman_1: "", freshman_2: null, big_1: "", big_2: null };
+const EMPTY: OverrideMatch = { little_1: "", little_2: null, big_1: "", big_2: null };
 
-export default function OverrideTable({ overrides, freshNames, sophNames, onChange }: Props) {
+export default function OverrideTable({ overrides, littleNames, bigNames, onChange }: Props) {
   function update(idx: number, patch: Partial<OverrideMatch>) {
     onChange(overrides.map((ov, i) => (i === idx ? { ...ov, ...patch } : ov)));
   }
@@ -24,7 +24,7 @@ export default function OverrideTable({ overrides, freshNames, sophNames, onChan
 
   function trioType(ov: OverrideMatch): "duo" | "2big" | "2little" {
     if (ov.big_2) return "2big";
-    if (ov.freshman_2) return "2little";
+    if (ov.little_2) return "2little";
     return "duo";
   }
 
@@ -52,8 +52,8 @@ export default function OverrideTable({ overrides, freshNames, sophNames, onChan
           <table className="w-full text-sm">
             <thead className="bg-amber-50 text-amber-800 uppercase text-xs">
               <tr>
-                <th className="px-3 py-2 text-left">Freshman 1</th>
-                <th className="px-3 py-2 text-left">Freshman 2 <span className="normal-case font-normal text-amber-600">(2-little trio only)</span></th>
+                <th className="px-3 py-2 text-left">Little 1</th>
+                <th className="px-3 py-2 text-left">Little 2 <span className="normal-case font-normal text-amber-600">(2-little trio only)</span></th>
                 <th className="px-3 py-2 text-left">Big 1</th>
                 <th className="px-3 py-2 text-left">Big 2 <span className="normal-case font-normal text-amber-600">(2-big trio only)</span></th>
                 <th className="px-3 py-2 text-left">Type</th>
@@ -65,31 +65,31 @@ export default function OverrideTable({ overrides, freshNames, sophNames, onChan
                 const type = trioType(ov);
                 return (
                   <tr key={idx} className="hover:bg-amber-50">
-                    {/* Freshman 1 */}
+                    {/* Little 1 */}
                     <td className="px-3 py-1.5">
                       <select
-                        value={ov.freshman_1}
-                        onChange={(e) => update(idx, { freshman_1: e.target.value })}
+                        value={ov.little_1}
+                        onChange={(e) => update(idx, { little_1: e.target.value })}
                         className="w-full border border-gray-300 rounded px-1 py-1 text-sm bg-white focus:outline-none focus:ring-1 focus:ring-amber-400"
                       >
                         <option value="">— select —</option>
-                        {freshNames.map((n) => <option key={n} value={n}>{n}</option>)}
+                        {littleNames.map((n) => <option key={n} value={n}>{n}</option>)}
                       </select>
                     </td>
-                    {/* Freshman 2 */}
+                    {/* Little 2 */}
                     <td className="px-3 py-1.5">
                       <select
-                        value={ov.freshman_2 ?? ""}
+                        value={ov.little_2 ?? ""}
                         disabled={!!ov.big_2}
                         onChange={(e) =>
-                          update(idx, { freshman_2: e.target.value || null })
+                          update(idx, { little_2: e.target.value || null })
                         }
                         className="w-full border border-gray-300 rounded px-1 py-1 text-sm bg-white focus:outline-none focus:ring-1 focus:ring-amber-400 disabled:opacity-40"
-                        title={ov.big_2 ? "Clear Big 2 first to set Freshman 2" : ""}
+                        title={ov.big_2 ? "Clear Big 2 first to set Little 2" : ""}
                       >
                         <option value="">—</option>
-                        {freshNames
-                          .filter((n) => n !== ov.freshman_1)
+                        {littleNames
+                          .filter((n) => n !== ov.little_1)
                           .map((n) => <option key={n} value={n}>{n}</option>)}
                       </select>
                     </td>
@@ -101,22 +101,22 @@ export default function OverrideTable({ overrides, freshNames, sophNames, onChan
                         className="w-full border border-gray-300 rounded px-1 py-1 text-sm bg-white focus:outline-none focus:ring-1 focus:ring-amber-400"
                       >
                         <option value="">— select —</option>
-                        {sophNames.map((n) => <option key={n} value={n}>{n}</option>)}
+                        {bigNames.map((n) => <option key={n} value={n}>{n}</option>)}
                       </select>
                     </td>
                     {/* Big 2 */}
                     <td className="px-3 py-1.5">
                       <select
                         value={ov.big_2 ?? ""}
-                        disabled={!!ov.freshman_2}
+                        disabled={!!ov.little_2}
                         onChange={(e) =>
                           update(idx, { big_2: e.target.value || null })
                         }
                         className="w-full border border-gray-300 rounded px-1 py-1 text-sm bg-white focus:outline-none focus:ring-1 focus:ring-amber-400 disabled:opacity-40"
-                        title={ov.freshman_2 ? "Clear Freshman 2 first to set Big 2" : ""}
+                        title={ov.little_2 ? "Clear Little 2 first to set Big 2" : ""}
                       >
                         <option value="">—</option>
-                        {sophNames
+                        {bigNames
                           .filter((n) => n !== ov.big_1)
                           .map((n) => <option key={n} value={n}>{n}</option>)}
                       </select>

@@ -1,36 +1,46 @@
 import { useState } from "react";
-import type { MatchResult, Person, OverrideMatch, TwinPair, BannedPair } from "./types";
+import type { MatchConfig, MatchResult, Person, OverrideMatch, TwinPair, BannedPair } from "./types";
 import InputPage from "./components/InputPage";
 import ResultsPage from "./components/ResultsPage";
 
 interface InputState {
-  freshmen: Person[];
-  sophomores: Person[];
+  littles: Person[];
+  bigs: Person[];
   overrides: OverrideMatch[];
   twins: TwinPair[];
   banned: BannedPair[];
+  config: MatchConfig;
 }
+
+const DEFAULT_CONFIG: MatchConfig = {
+  everyBigNeedsLittle: null,
+  everyLittleNeedsBig: null,
+  numPreferences: null,
+  bigWeight: 0.5,
+};
 
 export default function App() {
   const [result, setResult] = useState<MatchResult | null>(null);
   const [inputState, setInputState] = useState<InputState>({
-    freshmen: [],
-    sophomores: [],
+    littles: [],
+    bigs: [],
     overrides: [],
     twins: [],
     banned: [],
+    config: DEFAULT_CONFIG,
   });
 
   function handleResult(
     result: MatchResult,
-    fresh: Person[],
-    soph: Person[],
+    littles: Person[],
+    bigs: Person[],
     overrides: OverrideMatch[] = [],
     twins: TwinPair[] = [],
-    banned: BannedPair[] = []
+    banned: BannedPair[] = [],
+    config: MatchConfig = DEFAULT_CONFIG
   ) {
     setResult(result);
-    setInputState({ freshmen: fresh, sophomores: soph, overrides, twins, banned });
+    setInputState({ littles, bigs, overrides, twins, banned, config });
   }
 
   function handleEditConstraints() {
@@ -49,9 +59,12 @@ export default function App() {
   return (
     <InputPage
       onResult={handleResult}
+      initialLittles={inputState.littles}
+      initialBigs={inputState.bigs}
       initialOverrides={inputState.overrides}
       initialTwins={inputState.twins}
       initialBanned={inputState.banned}
+      initialConfig={inputState.config}
     />
   );
 }

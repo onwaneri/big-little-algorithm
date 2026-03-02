@@ -2,14 +2,14 @@ import type { TwinPair } from "../types";
 
 interface Props {
   twins: TwinPair[];
-  freshNames: string[];
-  sophNames: string[];
+  littleNames: string[];
+  bigNames: string[];
   onChange: (updated: TwinPair[]) => void;
 }
 
-const EMPTY: TwinPair = { person_1: "", person_2: "", group: "sophomore" };
+const EMPTY: TwinPair = { person_1: "", person_2: "", group: "big" };
 
-export default function TwinsTable({ twins, freshNames, sophNames, onChange }: Props) {
+export default function TwinsTable({ twins, littleNames, bigNames, onChange }: Props) {
   function update(idx: number, patch: Partial<TwinPair>) {
     onChange(twins.map((t, i) => (i === idx ? { ...t, ...patch } : t)));
   }
@@ -53,7 +53,7 @@ export default function TwinsTable({ twins, freshNames, sophNames, onChange }: P
             </thead>
             <tbody className="divide-y divide-violet-100">
               {twins.map((tw, idx) => {
-                const names = tw.group === "sophomore" ? sophNames : freshNames;
+                const names = tw.group === "big" ? bigNames : littleNames;
                 return (
                   <tr key={idx} className="hover:bg-violet-50">
                     {/* Group toggle */}
@@ -62,15 +62,15 @@ export default function TwinsTable({ twins, freshNames, sophNames, onChange }: P
                         value={tw.group}
                         onChange={(e) =>
                           update(idx, {
-                            group: e.target.value as "sophomore" | "freshman",
+                            group: e.target.value as "big" | "little",
                             person_1: "",
                             person_2: "",
                           })
                         }
                         className="border border-gray-300 rounded px-1 py-1 text-sm bg-white focus:outline-none focus:ring-1 focus:ring-violet-400"
                       >
-                        <option value="sophomore">Sophomore</option>
-                        <option value="freshman">Freshman</option>
+                        <option value="big">Big</option>
+                        <option value="little">Little</option>
                       </select>
                     </td>
                     {/* Person 1 */}
